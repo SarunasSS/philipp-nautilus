@@ -17,4 +17,4 @@ dependencies = [
 
 [tool.setuptools]
 py-modules = ["main"]
-packages = ["cli", "strategies"]
+packages = ["cli", "cli.backtest", "strategies"]
