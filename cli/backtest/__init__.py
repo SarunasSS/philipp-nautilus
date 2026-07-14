@@ -122,6 +122,7 @@ def _run_backtest(
     requested_bar_type: str | None,
     strategy_name: str,
     create_strategy: Callable[[BarType], Strategy],
+    oms_type: OmsType = OmsType.NETTING,
 ) -> None:
     selected_bar_type, bars, instrument = _load_backtest_data(settings, requested_bar_type)
     engine = _create_backtest_engine(settings)
@@ -129,7 +130,7 @@ def _run_backtest(
     try:
         engine.add_venue(
             venue=instrument.venue,
-            oms_type=OmsType.NETTING,
+            oms_type=oms_type,
             account_type=AccountType.MARGIN,
             starting_balances=[Money.from_str(settings.starting_balance)],
             base_currency=None,
@@ -138,10 +139,24 @@ def _run_backtest(
         engine.add_strategy(create_strategy(selected_bar_type))
         engine.add_data(bars)
         engine.run(start=settings.start, end=settings.end)
+
+        results_path = Path("data/results")
+        results_path.mkdir(parents=True, exist_ok=True)
+        reports = {
+            "orders": engine.trader.generate_orders_report(),
+            "order-fills": engine.trader.generate_order_fills_report(),
+            "fills": engine.trader.generate_fills_report(),
+            "positions": engine.trader.generate_positions_report(),
+            "account": engine.trader.generate_account_report(venue=instrument.venue).rename_axis("ts_event"),
+        }
+        for report_name, report in reports.items():
+            report.to_csv(results_path / f"{strategy_name}-{report_name}.csv")
+
         typer.echo(
             f"Backtest completed for {strategy_name} on {selected_bar_type} with {len(bars)} bar(s) "
             f"from {settings.start.date()} -> {settings.end.date()}.",
         )
+        typer.echo(f"Exported {len(reports)} reports to {results_path}.")
     finally:
         engine.dispose()
         typer.echo("Backtest engine disposed.")
