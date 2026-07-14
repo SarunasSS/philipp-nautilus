@@ -69,7 +69,3 @@ Each backtest exports Nautilus order, order-fill, fill, position, and account re
 
 The catalog downloader reads `DATABENTO_API_KEY` from the environment. Defaults target `NQ.c.0` on `GLBX.MDP3` with Databento `ohlcv-1m` bars.
 For continuous symbols, the downloader writes a matching continuous instrument entry so Nautilus can load `NQ.c.0.GLBX` bars for the backtest.
-
-## Strategy Visualization
-
-The investigated route is to export chart-neutral strategy events, generate a bounded Nautilus/Plotly HTML chart first, and reuse the same event contract in TradingView Lightweight Charts only if a live trading viewer is needed. See `docs/agents/strategy_visualization_options.md` for the comparison and decision criteria.
