@@ -51,6 +51,10 @@ def _run_htf_sweep_cisd(
         float,
         typer.Option("--stop-loss-distance-ratio", help="SL location as a ratio of CISD-to-swing distance"),
     ] = 1.0,
+    take_profit_multiplier: Annotated[
+        float,
+        typer.Option("--take-profit-multiplier", help="TP range multiple of the SL range, for adjusting the Risk Reward Ratio"),
+    ] = 2.0,
     stop_limit_offset: Annotated[
         float,
         typer.Option("--stop-limit-offset", help="Stop-limit limit-price offset as a direct ratio"),
@@ -80,6 +84,7 @@ def _run_htf_sweep_cisd(
                 stop_loss_distance_ratio=stop_loss_distance_ratio,
                 stop_limit_offset=stop_limit_offset,
                 signal_cooldown_seconds=signal_cooldown_seconds,
+                take_profit_multiplier=take_profit_multiplier,
             ),
         ),
     )

@@ -60,7 +60,8 @@ uv run python main.py backtest \
   --entry-limit-offset 0.0 \
   --trade-notional 1000000 \
   --stop-order-type MARKET \
-  --stop-loss-distance-ratio 1.0
+  --stop-loss-distance-ratio 1.0 \
+  --take-profit-multiplier 2.0
 ```
 
 `--entry-limit-offset` and `--stop-limit-offset` are direct ratios, so `0.001` means `0.1%`. `--trade-notional` defaults to `1000`; the NQ example above uses `1000000` so contract sizing produces filled futures orders in the local backtest. Signal cooldown defaults to one HTF period and can be overridden with `--signal-cooldown-seconds`. The HTF sweep backtest uses hedging mode so concurrent entries retain separate positions.

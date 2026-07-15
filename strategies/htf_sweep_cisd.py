@@ -41,6 +41,7 @@ class HTFSweepCISDStrategyConfig(BaseStrategyConfig, frozen=True):
     trade_notional: float = 1_000.0
     stop_order_type: str = OrderMode.MARKET.value
     stop_loss_distance_ratio: float = 1.0
+    take_profit_multiplier: float = 2.0
     stop_limit_offset: float = 0.0
     signal_cooldown_seconds: float | None = None
 
@@ -153,7 +154,7 @@ class Entry(Stratlet):
             if stop_distance <= 0:
                 raise ValueError("long stop distance must be positive")
 
-            take_profit_price = self.instrument.make_price(entry_price + (2 * stop_distance))
+            take_profit_price = self.instrument.make_price(entry_price + (self.config.take_profit_multiplier * stop_distance))
             stop_limit_price = self.instrument.make_price(
                 stop_price.as_double() * (1 - self.config.stop_limit_offset),
             )
@@ -170,7 +171,7 @@ class Entry(Stratlet):
             if stop_distance <= 0:
                 raise ValueError("short stop distance must be positive")
 
-            take_profit_price = self.instrument.make_price(entry_price - (2 * stop_distance))
+            take_profit_price = self.instrument.make_price(entry_price - (self.config.take_profit_multiplier * stop_distance))
             stop_limit_price = self.instrument.make_price(
                 stop_price.as_double() * (1 + self.config.stop_limit_offset),
             )
