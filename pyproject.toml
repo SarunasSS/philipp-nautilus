@@ -17,4 +17,15 @@ dependencies = [
 
 [tool.setuptools]
 py-modules = ["main"]
-packages = ["cli", "cli.backtest", "strategies"]
+packages = [
+    "cli",
+    "cli.backtest",
+    "cli.live",
+    "phillip",
+    "phillip.adapters",
+    "phillip.adapters.tradovate",
+    "phillip.adapters.tradovate.http",
+    "phillip.adapters.tradovate.websocket",
+    "strategies",
+]
+package-dir = { phillip = "src/phillip" }

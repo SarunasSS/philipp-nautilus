@@ -61,7 +61,6 @@ class SignalSideState:
 @dataclass
 class Entry(Stratlet):
     config: HTFSweepCISDStrategyConfig
-    ltf_bar_type: BarType
     instrument: Instrument
     direction: TradeDirection
     swing_price: float
@@ -84,7 +83,7 @@ class Entry(Stratlet):
         entry_order_type = OrderMode(self.config.entry_order_type.upper())
         if entry_order_type == OrderMode.MARKET:
             entry_order = self.strategy.order_factory.market(
-                instrument_id=self.ltf_bar_type.instrument_id,
+                instrument_id=self.instrument.id,
                 order_side=order_side,
                 quantity=quantity,
                 tags=["HTF_CISD", "ENTRY"],
@@ -110,7 +109,7 @@ class Entry(Stratlet):
                 ) + timedelta(minutes=self.config.entry_order_expire_minutes)
 
             entry_order = self.strategy.order_factory.limit(
-                instrument_id=self.ltf_bar_type.instrument_id,
+                instrument_id=self.instrument.id,
                 order_side=order_side,
                 quantity=quantity,
                 price=entry_limit_price,
@@ -180,7 +179,7 @@ class Entry(Stratlet):
         stop_order_type = OrderMode(self.config.stop_order_type.upper())
         if stop_order_type == OrderMode.MARKET:
             stop_order = self.strategy.order_factory.stop_market(
-                instrument_id=self.ltf_bar_type.instrument_id,
+                instrument_id=self.instrument.id,
                 order_side=exit_side,
                 quantity=closed_entry_order.filled_qty,
                 trigger_price=stop_price,
@@ -189,7 +188,7 @@ class Entry(Stratlet):
             )
         else:
             stop_order = self.strategy.order_factory.stop_limit(
-                instrument_id=self.ltf_bar_type.instrument_id,
+                instrument_id=self.instrument.id,
                 order_side=exit_side,
                 quantity=closed_entry_order.filled_qty,
                 price=stop_limit_price,
@@ -199,7 +198,7 @@ class Entry(Stratlet):
             )
 
         take_profit_order = self.strategy.order_factory.limit(
-            instrument_id=self.ltf_bar_type.instrument_id,
+            instrument_id=self.instrument.id,
             order_side=exit_side,
             quantity=closed_entry_order.filled_qty,
             price=take_profit_price,
@@ -210,7 +209,7 @@ class Entry(Stratlet):
         self.orders["take_profit"] = take_profit_order
         self.strategy.submit_order_list(
             self.strategy.order_factory.create_list(
-                [self.orders["stop_loss"], self.orders["take_profit"]],
+                [stop_order, take_profit_order],
             ),
             position_id=self.position.id,
         )
@@ -332,7 +331,7 @@ class HTFSweepCISDStrategy(BaseStrategy):
     def on_bar(self, bar: Bar) -> None:
         if bar.bar_type.standard() == self._htf_bar_type.standard():
             self._htf_bars.append(bar)
-            del self._htf_bars[:-3]
+            del self._htf_bars[:-1]
             self._ltf_bars = [ltf_bar for ltf_bar in self._ltf_bars if ltf_bar.ts_event > bar.ts_event]
             self._short = SignalSideState()
             self._long = SignalSideState()
@@ -516,7 +515,6 @@ class HTFSweepCISDStrategy(BaseStrategy):
         entry = Entry(
             strategy=self,
             config=self.config,
-            ltf_bar_type=self._ltf_bar_type,
             instrument=self._instrument,
             direction=signal_direction,
             swing_price=signal_candidate.swing_price,
