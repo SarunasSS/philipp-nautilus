@@ -101,12 +101,3 @@ uv run python main.py live \
 ```
 
 There is no provider selector. Nautilus routes `TRADOVATE` instruments to the venue-bound custom adapter and uses Databento as the default client for exchange venues such as `GLBX`. Replace `MNQU6` when that futures contract is no longer current. Databento access also depends on the API key's entitlement to the `GLBX.MDP3` dataset.
-
-## Test
-
-```bash
-uv run python -m unittest discover -s tests -v
-```
-
-The catalog downloader also reads `DATABENTO_API_KEY` from the environment. Defaults target `NQ.c.0` on `GLBX.MDP3` with Databento `ohlcv-1m` bars.
-For continuous symbols, the downloader writes a matching continuous instrument entry so Nautilus can load `NQ.c.0.GLBX` bars for the backtest.
