@@ -1,6 +1,6 @@
 import asyncio
-import urllib.parse
 import msgspec
+import urllib.parse
 
 
 from datetime import datetime
@@ -30,7 +30,7 @@ class TradovateHttpClient:
         device_id: str | None = None,
         access_token: str | None = None,
         md_access_token: str | None = None,
-        timeout_secs: float = 15.0,
+        timeout_secs: int = 15,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._username = username
@@ -43,7 +43,7 @@ class TradovateHttpClient:
         self._access_token = access_token
         self._md_access_token = md_access_token
         self._expiration_ns: int | None = None
-        self._timeout_secs = timeout_secs
+        self._timeout_secs = int(timeout_secs)
         self._client = HttpClient(keyed_quotas=[], default_quota=None)
         self._auth_lock = asyncio.Lock()
         self._log = Logger(type(self).__name__)
@@ -84,9 +84,6 @@ class TradovateHttpClient:
             for name, value in (
                 ("username", self._username),
                 ("password", self._password),
-                ("app_id", self._app_id),
-                ("cid", self._cid),
-                ("sec", self._sec),
             )
             if value in (None, "")
         ]
@@ -95,14 +92,31 @@ class TradovateHttpClient:
                 "Missing credentials: " + ", ".join(missing) + ". Supply credentials or both access tokens.",
             )
 
-        payload: dict[str, Any] = {
-            "name": self._username,
-            "password": self._password,
-            "appId": self._app_id,
-            "appVersion": self._app_version,
+        api_key_fields = {
+            "app_id": self._app_id,
             "cid": self._cid,
             "sec": self._sec,
         }
+        provided_api_key_fields = {
+            name for name, value in api_key_fields.items() if value not in (None, "")
+        }
+        if provided_api_key_fields and len(provided_api_key_fields) != len(api_key_fields):
+            missing_api_key_fields = sorted(api_key_fields.keys() - provided_api_key_fields)
+            raise TradovateApiError(
+                "Incomplete API key: missing " + ", ".join(missing_api_key_fields),
+            )
+
+        payload: dict[str, Any] = {
+            "name": self._username,
+            "password": self._password,
+        }
+        if provided_api_key_fields:
+            payload.update(
+                appId=self._app_id,
+                appVersion=self._app_version,
+                cid=self._cid,
+                sec=self._sec,
+            )
         if self._device_id:
             payload["deviceId"] = self._device_id
 

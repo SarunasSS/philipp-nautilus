@@ -2,10 +2,10 @@ from typing import Any
 
 from nautilus_trader.common.component import LiveClock
 from nautilus_trader.common.providers import InstrumentProvider
+from nautilus_trader.config import InstrumentProviderConfig
 from nautilus_trader.model.identifiers import InstrumentId
 
 from .common import parse_instrument
-from .config import TradovateInstrumentProviderConfig
 from .core import TRADOVATE_VENUE
 from .http.client import TradovateHttpClient
 
@@ -15,7 +15,7 @@ class TradovateInstrumentProvider(InstrumentProvider):
         self,
         client: TradovateHttpClient,
         clock: LiveClock,
-        config: TradovateInstrumentProviderConfig | None = None,
+        config: InstrumentProviderConfig | None = None,
     ) -> None:
         super().__init__(config=config)
         self._client = client

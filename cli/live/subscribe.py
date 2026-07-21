@@ -23,7 +23,7 @@ def _run_subscribe(
         typer.Option(
             "--bar-type",
             "-b",
-            help="External Tradovate bar type to subscribe to",
+            help="External bar type to subscribe to",
         ),
     ],
 ) -> None:

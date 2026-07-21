@@ -25,7 +25,7 @@ class TradovateWebSocketClient:
         base_url: str,
         handler: Callable[[dict[str, Any]], None],
         reconnect_handler: Callable[[], Awaitable[None]] | None = None,
-        request_timeout_secs: float = 15.0,
+        request_timeout_secs: int = 15,
     ) -> None:
         self._loop = loop
         self._base_url = base_url
@@ -73,9 +73,11 @@ class TradovateWebSocketClient:
                 await self._heartbeat_task
             except asyncio.CancelledError:
                 pass
+            except Exception as exc:
+                self._log.warning(f"Tradovate heartbeat failed before disconnect: {exc}")
             self._heartbeat_task = None
 
-        if self._client is not None and not self._client.is_closed():
+        if self._client is not None and self._client.is_active():
             await self._client.disconnect()
         self._client = None
         self._fail_pending(TradovateProtocolError("WebSocket disconnected"))
@@ -101,9 +103,11 @@ class TradovateWebSocketClient:
             self._pending.pop(request_id, None)
 
         status = int(response.get("s", 0) or 0)
+        details = response.get("d")
         if status < 200 or status >= 300:
-            details = response.get("d")
             raise TradovateApiError(str(details or response), status=status, details=response)
+        if isinstance(details, dict) and details.get("errorText"):
+            raise TradovateApiError(str(details["errorText"]), status=status, details=response)
         return response
 
     def _handle_raw_message(self, raw: bytes) -> None:
@@ -138,6 +142,7 @@ class TradovateWebSocketClient:
             self._fail_pending(TradovateProtocolError("WebSocket reconnected during request"))
             await asyncio.sleep(0.1)
             await self._authorize()
+            self._start_heartbeat()
             if self._reconnect_handler is not None:
                 await self._reconnect_handler()
             self._log.info("Tradovate WebSocket reauthenticated and resubscribed")
@@ -152,7 +157,11 @@ class TradovateWebSocketClient:
         while self.is_connected():
             await asyncio.sleep(2.5)
             if self._client is not None and self.is_connected():
-                await self._client.send_text(b"[]")
+                try:
+                    await self._client.send_text(b"[]")
+                except Exception as exc:
+                    self._log.warning(f"Tradovate heartbeat stopped: {exc}")
+                    return
 
     def _fail_pending(self, exc: Exception) -> None:
         for future in self._pending.values():

@@ -105,18 +105,6 @@ def _load_backtest_data(
     return selected_bar_type, bars, instruments[0]
 
 
-def _create_backtest_engine(settings: BacktestRunSettings) -> BacktestEngine:
-    engine = BacktestEngine(
-        config=BacktestEngineConfig(
-            trader_id=TraderId(settings.trader_id),
-            logging=LoggingConfig(log_level=settings.log_level),
-        ),
-    )
-    typer.echo(f"Created Nautilus BacktestEngine for trader_id={settings.trader_id}")
-
-    return engine
-
-
 def _run_backtest(
     settings: BacktestRunSettings,
     requested_bar_type: str | None,
@@ -125,7 +113,13 @@ def _run_backtest(
     oms_type: OmsType = OmsType.NETTING,
 ) -> None:
     selected_bar_type, bars, instrument = _load_backtest_data(settings, requested_bar_type)
-    engine = _create_backtest_engine(settings)
+    engine = BacktestEngine(
+        config=BacktestEngineConfig(
+            trader_id=TraderId(settings.trader_id),
+            logging=LoggingConfig(log_level=settings.log_level),
+        ),
+    )
+    typer.echo(f"Created Nautilus BacktestEngine for trader_id={settings.trader_id}")
 
     try:
         engine.add_venue(

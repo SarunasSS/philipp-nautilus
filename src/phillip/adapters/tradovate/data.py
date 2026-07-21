@@ -26,6 +26,7 @@ from .common import parse_bar
 from .config import TradovateDataClientConfig
 from .core import TRADOVATE_CLIENT_ID
 from .core import TRADOVATE_VENUE
+from .errors import TradovateProtocolError
 from .http.client import TradovateHttpClient
 from .providers import TradovateInstrumentProvider
 from .websocket.client import TradovateWebSocketClient
@@ -170,7 +171,7 @@ class TradovateDataClient(LiveMarketDataClient):
         response = await self._ws_client.request(
             "md/getChart",
             {
-                "symbol": self._contract_id(instrument),
+                "symbol": int(instrument.info["contract_id"]),
                 "chartDescription": {
                     "underlyingType": underlying_type,
                     "elementSize": element_size,
@@ -181,6 +182,10 @@ class TradovateDataClient(LiveMarketDataClient):
             },
         )
         result = response.get("d") or {}
+        if not isinstance(result, dict) or "historicalId" not in result or "realtimeId" not in result:
+            raise TradovateProtocolError(
+                f"md/getChart response missing historicalId or realtimeId: {response}",
+            )
         subscription = _ChartSubscription(
             bar_type=bar_type,
             instrument=instrument,
@@ -203,7 +208,3 @@ class TradovateDataClient(LiveMarketDataClient):
         if instrument is None:
             raise ValueError(f"Tradovate instrument not found: {instrument_id}")
         return instrument
-
-    @staticmethod
-    def _contract_id(instrument: Instrument) -> int:
-        return int(instrument.info["contract_id"])

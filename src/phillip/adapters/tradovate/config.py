@@ -1,13 +1,8 @@
-from nautilus_trader.config import InstrumentProviderConfig
 from nautilus_trader.config import LiveDataClientConfig
 
 
 from .core import PRODUCTION_DEMO_HTTP_URL
 from .core import PRODUCTION_MARKET_DATA_WS_URL
-
-
-class TradovateInstrumentProviderConfig(InstrumentProviderConfig, frozen=True):
-    pass
 
 
 class TradovateDataClientConfig(LiveDataClientConfig, frozen=True):
@@ -22,4 +17,4 @@ class TradovateDataClientConfig(LiveDataClientConfig, frozen=True):
     md_access_token: str | None = None
     base_url: str = PRODUCTION_DEMO_HTTP_URL
     ws_base_url: str = PRODUCTION_MARKET_DATA_WS_URL
-    request_timeout_secs: float = 15.0
+    request_timeout_secs: int = 15
