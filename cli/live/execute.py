@@ -4,8 +4,8 @@ import typer
 from typing import Annotated
 
 
-from strategies.execute import Execute
-from strategies.execute import ExecuteConfig
+from strategies.execute import ExecuteStrategy
+from strategies.execute import ExecuteStrategyConfig
 from strategies.execute import ExecutionCase
 
 
@@ -13,7 +13,7 @@ from ..live import _get_live_settings
 from ..live import _run_live
 
 
-cli = typer.Typer(help="Run live execution adapter tests")
+cli = typer.Typer(help="Run ExecuteStrategy live execution adapter tests")
 
 
 @cli.command("run")
@@ -50,8 +50,8 @@ def _run_execute(
 ) -> None:
     _run_live(
         settings=_get_live_settings(ctx),
-        strategy=Execute(
-            config=ExecuteConfig(
+        strategy=ExecuteStrategy(
+            config=ExecuteStrategyConfig(
                 bar_type=bar_type,
                 case=case.value,
                 quantity=quantity,

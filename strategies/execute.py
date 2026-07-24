@@ -12,23 +12,23 @@ from nautilus_trader.model.orders import Order
 from nautilus_trader.test_kit.functions import eventually
 
 
-from strategies.subscribe import Subscribe
-from strategies.subscribe import SubscribeConfig
+from strategies.subscribe import SubscribeStrategy
+from strategies.subscribe import SubscribeStrategyConfig
 
 
 class ExecutionCase(str, Enum):
     ENTRY_EXIT = "entry-exit"
 
 
-class ExecuteConfig(SubscribeConfig, frozen=True):
+class ExecuteStrategyConfig(SubscribeStrategyConfig, frozen=True):
     case: str
     quantity: float = 1.0
     timeout: float = 10.0
     delay: float = 0.0
 
 
-class Execute(Subscribe):
-    def __init__(self, config: ExecuteConfig) -> None:
+class ExecuteStrategy(SubscribeStrategy):
+    def __init__(self, config: ExecuteStrategyConfig) -> None:
         super().__init__(config)
 
         ExecutionCase(config.case)
@@ -53,7 +53,7 @@ class Execute(Subscribe):
         if instrument.id != self._bar_type.instrument_id or self._execution_task is not None:
             return
         if self._execution_loop is None:
-            raise RuntimeError("Execute requires an active Nautilus asyncio event loop")
+            raise RuntimeError("ExecuteStrategy requires an active Nautilus asyncio event loop")
 
         self._execution_task = self._execution_loop.create_task(self._run_case(instrument))
 

@@ -230,10 +230,8 @@ def _run_live(
 
 
 from cli.live.subscribe import cli as subscribe_cli
-from cli.live.execution_state import cli as execution_state_cli
 from cli.live.execute import cli as execute_cli
 
 
 cli.add_typer(subscribe_cli, name="subscribe")
-cli.add_typer(execution_state_cli, name="execution-state")
 cli.add_typer(execute_cli, name="execute")

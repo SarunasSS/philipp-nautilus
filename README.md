@@ -1,6 +1,6 @@
 # Philipp Nautilus
 
-NautilusTrader scaffold for backtesting experiments and live market-data adapters.
+NautilusTrader scaffold for backtesting experiments and live market-data/execution adapters.
 
 ## Repository Structure
 
@@ -13,6 +13,7 @@ cli/
 ├── catalog.py           # Download Databento bars into the catalog
 └── live/                # Run live strategies through configured data providers
     ├── __init__.py      # Shared live callback and runner
+    ├── execute.py       # Case-selected execution adapter tests
     └── subscribe.py     # Generic bar subscription command
 docs/
 ├── agents/              # Work notes for resumability
@@ -22,13 +23,18 @@ docs/
 └── strategy_flow.md     # Explicit HTF sweep + CISD strategy flow
 src/phillip/adapters/tradovate/
 ├── data.py              # Bars-only Nautilus live data client
+├── execution.py         # Account lifecycle, user stream, and reconciliation
+├── execution_commands.py # Order command translation
+├── execution_parsing.py # Tradovate-to-Nautilus execution transforms
+├── execution_reports.py # REST-backed report retrieval
 ├── providers.py         # Futures instrument discovery
 ├── http/                # REST authentication and contract metadata
 └── websocket/           # Framing, heartbeat, and reconnect handling
 strategies/
 ├── base.py              # Shared live/backtest stratlet lifecycle
+├── execute.py           # ExecuteStrategy subscription plus execution tests
 ├── htf_sweep_cisd.py    # HTF sweep + CISD managed trade strategy
-└── subscribe.py         # Subscribe to bars and log them
+└── subscribe.py         # SubscribeStrategy requests and logs bars
 ```
 
 ## Setup
@@ -43,6 +49,7 @@ uv sync
 Tradovate accepts username/password authentication. API-key authentication additionally requires the key name (`TRADOVATE_APP_ID`), key ID (`TRADOVATE_CID`), and key secret (`TRADOVATE_SEC`) as one complete bundle. Existing `TRADOVATE_ACCESS_TOKEN` and `TRADOVATE_MD_ACCESS_TOKEN` can be supplied together instead. Keep these values out of source control and logs.
 
 The live node registers every provider for which credentials are present. Nautilus's built-in Databento adapter reads `DATABENTO_API_KEY`; Tradovate uses the credential forms described above.
+Set `TRADOVATE_ACCOUNT_ID` when the credentials expose more than one open account. The execution client deliberately refuses to guess which account should receive commands.
 
 ## Run
 
@@ -91,6 +98,19 @@ uv run python main.py live \
 ```
 
 The live adapter currently supports external LAST bars only. The example contract expires, so replace `NQU6` with a currently listed contract when necessary. See [docs/Tradovate_API.md](docs/Tradovate_API.md) for protocol and configuration details.
+
+Run an active execution-adapter test while retaining the same instrument request and bar subscription behavior:
+
+```bash
+uv run python main.py live \
+  --environment demo \
+  execute run \
+  --bar-type NQU6.TRADOVATE-1-MINUTE-LAST-EXTERNAL \
+  --case entry-exit \
+  --quantity 1
+```
+
+This command submits a market buy, waits for its fill, and then submits a market sell for the filled quantity. It places real orders in the selected Tradovate environment. Wait for the `completed` log before stopping the node; an interruption between fills requires checking and flattening the account manually. The available case names are `entry-exit`, `limit`, `stop`, `stop-limit`, `load`, and `external`; only `entry-exit` is currently implemented, and the other cases stop before submitting an order.
 
 Run the generic subscribe strategy through Nautilus's built-in Databento adapter. The strategy first requests the instrument definition, then subscribes to its live one-minute bars:
 
