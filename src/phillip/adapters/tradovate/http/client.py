@@ -69,6 +69,9 @@ class TradovateHttpClient:
     async def get_contract(self, name: str) -> dict[str, Any]:
         return await self._get("/contract/find", {"name": name})
 
+    async def get_contract_by_id(self, contract_id: int) -> dict[str, Any]:
+        return await self._get("/contract/item", {"id": str(contract_id)})
+
     async def get_contract_maturity(self, maturity_id: int) -> dict[str, Any]:
         return await self._get("/contractMaturity/item", {"id": str(maturity_id)})
 
@@ -77,6 +80,22 @@ class TradovateHttpClient:
 
     async def get_currency(self, currency_id: int) -> dict[str, Any]:
         return await self._get("/currency/item", {"id": str(currency_id)})
+
+    async def get(self, path: str, params: dict[str, str] | None = None) -> Any:
+        return await self._request(
+            method=HttpMethod.GET,
+            path=path,
+            params=params,
+            authenticated=True,
+        )
+
+    async def post(self, path: str, payload: dict[str, Any]) -> Any:
+        return await self._request(
+            method=HttpMethod.POST,
+            path=path,
+            body=msgspec.json.encode(payload),
+            authenticated=True,
+        )
 
     async def _request_access_token(self) -> None:
         missing = [

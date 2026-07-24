@@ -50,6 +50,14 @@ class TradovateInstrumentProvider(InstrumentProvider):
 
         raw_symbol = instrument_id.symbol.value
         contract = await self._client.get_contract(raw_symbol)
+        await self._load_contract(contract)
+
+    async def load_contract_async(self, contract_id: int) -> InstrumentId:
+        contract = await self._client.get_contract_by_id(contract_id)
+        return await self._load_contract(contract)
+
+    async def _load_contract(self, contract: dict[str, Any]) -> InstrumentId:
+        raw_symbol = str(contract["name"])
         maturity = await self._client.get_contract_maturity(int(contract["contractMaturityId"]))
         product = await self._client.get_product(int(maturity["productId"]))
         currency = await self._client.get_currency(int(product["currencyId"]))
@@ -63,3 +71,4 @@ class TradovateInstrumentProvider(InstrumentProvider):
         )
         self.add(instrument)
         self._log.info(f"Loaded Tradovate instrument {instrument.id}")
+        return instrument.id
