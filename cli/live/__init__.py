@@ -162,7 +162,10 @@ def _run_live(
     exec_client_factories: dict[str, type[LiveExecClientFactory]] = {}
 
     if settings.databento_api_key:
-        data_clients[DATABENTO] = DatabentoDataClientConfig(api_key=settings.databento_api_key)
+        data_clients[DATABENTO] = DatabentoDataClientConfig(
+            api_key=settings.databento_api_key,
+            use_exchange_as_venue=False,
+        )
         data_client_factories[DATABENTO] = DatabentoLiveDataClientFactory
 
     if (settings.username and settings.password) or (settings.access_token and settings.md_access_token):

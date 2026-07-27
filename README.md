@@ -110,7 +110,7 @@ uv run python main.py live \
   --quantity 1
 ```
 
-This command submits a market buy, waits for its fill, and then submits a market sell for the filled quantity. It places real orders in the selected Tradovate environment. Wait for the `completed` log before stopping the node; an interruption between fills requires checking and flattening the account manually. The available case names are `entry-exit`, `limit`, `stop`, `stop-limit`, `load`, and `external`; only `entry-exit` is currently implemented, and the other cases stop before submitting an order.
+This command submits a market buy, waits for its fill, and then submits a market sell for the filled quantity. It places real orders in the selected Tradovate environment. Wait for the `completed` log before stopping the node; an interruption between fills requires checking and flattening the account manually. The currently supported case is `entry-exit`.
 
 Run the generic subscribe strategy through Nautilus's built-in Databento adapter. The strategy first requests the instrument definition, then subscribes to its live one-minute bars:
 
@@ -120,4 +120,4 @@ uv run python main.py live \
   --bar-type MNQU6.GLBX-1-MINUTE-LAST-EXTERNAL
 ```
 
-There is no provider selector. Nautilus routes `TRADOVATE` instruments to the venue-bound custom adapter and uses Databento as the default client for exchange venues such as `GLBX`. Replace `MNQU6` when that futures contract is no longer current. Databento access also depends on the API key's entitlement to the `GLBX.MDP3` dataset.
+There is no provider selector. Nautilus routes `TRADOVATE` instruments to the venue-bound custom adapter and uses Databento as the default client for exchange venues such as `GLBX`. The live Databento client retains the dataset venue (`GLBX`) so its instrument IDs match the catalog and CLI examples. Replace `MNQU6` when that futures contract is no longer current.
