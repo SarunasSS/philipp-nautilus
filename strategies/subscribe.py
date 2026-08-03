@@ -34,6 +34,4 @@ class SubscribeStrategy(Strategy):
         self.log.info(f"Received bar: {ts_event.isoformat()} {bar}")
 
     def on_stop(self) -> None:
-        if self._subscribed:
-            self.unsubscribe_bars(self._bar_type)
-            self._subscribed = False
+        self._subscribed = False

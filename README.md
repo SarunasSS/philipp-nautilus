@@ -97,7 +97,7 @@ uv run python main.py live \
   --bar-type NQU6.TRADOVATE-1-MINUTE-LAST-EXTERNAL
 ```
 
-The live adapter currently supports external LAST bars only. The example contract expires, so replace `NQU6` with a currently listed contract when necessary. See [docs/Tradovate_API.md](docs/Tradovate_API.md) for protocol and configuration details.
+The live adapter currently supports external LAST bars only. The example contract expires, so replace `NQU6` with a currently listed contract when necessary. Tradovate API-key **Market Data: Read Only** permission and an ordinary display-data subscription do not by themselves prove that CME non-display API data is enabled; `Symbol is inaccessible` for valid CME symbols must be resolved with Tradovate support. See [docs/Tradovate_API.md](docs/Tradovate_API.md) for the verified diagnostic and protocol details.
 
 Run an active execution-adapter test while retaining the same instrument request and bar subscription behavior:
 
@@ -121,3 +121,9 @@ uv run python main.py live \
 ```
 
 There is no provider selector. Nautilus routes `TRADOVATE` instruments to the venue-bound custom adapter and uses Databento as the default client for exchange venues such as `GLBX`. The live Databento client retains the dataset venue (`GLBX`) so its instrument IDs match the catalog and CLI examples. Replace `MNQU6` when that futures contract is no longer current.
+
+The Databento API key must have a live `GLBX.MDP3` license. Historical access alone is
+not sufficient: Nautilus can resolve the delayed historical instrument definition and
+log `Subscribed bars`, while the live gateway still sends no records. Databento's
+official client reports this state explicitly as
+`A live data license is required to access GLBX.MDP3`.

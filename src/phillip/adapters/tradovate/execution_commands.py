@@ -241,9 +241,9 @@ def build_place_order_payload(order: Order, account_id: int) -> dict[str, Any]:
         "clOrdId": client_order_id,
         "isAutomated": True,
     }
-    if order.price is not None:
+    if order.order_type in {OrderType.LIMIT, OrderType.STOP_LIMIT}:
         payload["price"] = order.price.as_double()
-    if order.trigger_price is not None:
+    if order.order_type in {OrderType.STOP_MARKET, OrderType.STOP_LIMIT}:
         payload["stopPrice"] = order.trigger_price.as_double()
     if order.time_in_force == TimeInForce.GTD:
         if order.expire_time is None:

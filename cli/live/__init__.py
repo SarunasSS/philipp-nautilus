@@ -25,8 +25,10 @@ from nautilus_trader.trading.strategy import Strategy
 from phillip.adapters.tradovate.config import TradovateDataClientConfig
 from phillip.adapters.tradovate.config import TradovateExecClientConfig
 from phillip.adapters.tradovate.core import PRODUCTION_DEMO_HTTP_URL
+from phillip.adapters.tradovate.core import PRODUCTION_DEMO_MARKET_DATA_WS_URL
 from phillip.adapters.tradovate.core import PRODUCTION_DEMO_WS_URL
 from phillip.adapters.tradovate.core import PRODUCTION_LIVE_HTTP_URL
+from phillip.adapters.tradovate.core import PRODUCTION_LIVE_MARKET_DATA_WS_URL
 from phillip.adapters.tradovate.core import PRODUCTION_LIVE_WS_URL
 from phillip.adapters.tradovate.core import TRADOVATE
 from phillip.adapters.tradovate.factories import TradovateLiveDataClientFactory
@@ -179,6 +181,11 @@ def _run_live(
             if settings.environment == TradovateEnvironment.DEMO
             else PRODUCTION_LIVE_WS_URL
         )
+        market_data_ws_base_url = (
+            PRODUCTION_DEMO_MARKET_DATA_WS_URL
+            if settings.environment == TradovateEnvironment.DEMO
+            else PRODUCTION_LIVE_MARKET_DATA_WS_URL
+        )
         tradovate_auth: dict[str, Any] = {
             "username": settings.username,
             "password": settings.password,
@@ -191,7 +198,10 @@ def _run_live(
             "md_access_token": settings.md_access_token,
             "base_url": base_url,
         }
-        data_clients[TRADOVATE] = TradovateDataClientConfig(**tradovate_auth)
+        data_clients[TRADOVATE] = TradovateDataClientConfig(
+            **tradovate_auth,
+            ws_base_url=market_data_ws_base_url,
+        )
         exec_clients[TRADOVATE] = TradovateExecClientConfig(
             **tradovate_auth,
             account_id=settings.account_id,
