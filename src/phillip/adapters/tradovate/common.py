@@ -76,7 +76,7 @@ def parse_instrument(
     ts_init: int,
 ) -> FuturesContract:
     tick_size = Decimal(str(product["tickSize"]))
-    price_precision = max(0, -tick_size.as_tuple().exponent)
+    price_precision = max(0, -int(tick_size.as_tuple().exponent))
     currency_code = str(currency.get("name") or currency.get("code") or "USD").upper()
     expiration_ns = parse_timestamp_ns(maturity.get("expirationDate"), ts_init)
     product_symbol = str(product.get("name") or raw_symbol)
