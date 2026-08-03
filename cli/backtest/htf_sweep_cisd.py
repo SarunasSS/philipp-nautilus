@@ -25,7 +25,11 @@ def _run_htf_sweep_cisd(
     ],
     ltf_bar_type: Annotated[
         str,
-        typer.Option("--ltf-bar-type", help="LTF catalog bar type to load and subscribe to"),
+        typer.Option("--ltf-bar-type", help="Composite/internal LTF bar type to subscribe to"),
+    ],
+    original_bar_type: Annotated[
+            str,
+            typer.Option("--original-bar-type", help="original catalog bar type to load the data"),
     ],
     entry_order_type: Annotated[
         OrderMode,
@@ -69,13 +73,14 @@ def _run_htf_sweep_cisd(
 ) -> None:
     _run_backtest(
         settings=_get_backtest_settings(ctx),
-        requested_bar_type=ltf_bar_type,
+        requested_bar_type=original_bar_type,
         strategy_name="htf-sweep-cisd",
         oms_type=OmsType.HEDGING,
         create_strategy=lambda selected_bar_type: HTFSweepCISDStrategy(
             config=HTFSweepCISDStrategyConfig(
                 htf_bar_type=htf_bar_type,
-                ltf_bar_type=str(selected_bar_type),
+                ltf_bar_type=ltf_bar_type,
+                original_bar_type=str(selected_bar_type),
                 entry_order_type=entry_order_type.value,
                 entry_limit_offset=entry_limit_offset,
                 entry_order_expire_minutes=entry_order_expire_minutes,

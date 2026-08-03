@@ -34,6 +34,7 @@ class OrderMode(str, Enum):
 class HTFSweepCISDStrategyConfig(BaseStrategyConfig, frozen=True):
     htf_bar_type: str
     ltf_bar_type: str
+    original_bar_type: str
     comparison_tolerance: float = 0.0
     entry_order_type: str = OrderMode.LIMIT.value
     entry_limit_offset: float = 0.0
@@ -307,6 +308,7 @@ class HTFSweepCISDStrategy(BaseStrategy):
 
         self._ltf_bar_type = BarType.from_str(config.ltf_bar_type)
         self._htf_bar_type = BarType.from_str(config.htf_bar_type)
+        self._original_bar_type = BarType.from_str(config.original_bar_type)
         self._validate_config()
 
         self._htf_bars: list[Bar] = []
@@ -325,6 +327,7 @@ class HTFSweepCISDStrategy(BaseStrategy):
         if self._instrument is None:
             raise RuntimeError(f"No instrument found for {self._ltf_bar_type.instrument_id}")
 
+        self.subscribe_bars(self._original_bar_type)
         self.subscribe_bars(self._ltf_bar_type)
         self.subscribe_bars(self._htf_bar_type)
 
@@ -376,25 +379,36 @@ class HTFSweepCISDStrategy(BaseStrategy):
             raise ValueError("signal_cooldown_seconds must be non-negative")
 
     def _validate_bar_types(self) -> None:
-        if self._htf_bar_type.instrument_id != self._ltf_bar_type.instrument_id:
-            raise ValueError("htf_bar_type and ltf_bar_type must use the same instrument")
+        if self._htf_bar_type.instrument_id != self._originial_bar_type.instrument_id:
+            raise ValueError("htf_bar_type and original_bar_type must use the same instrument")
+        if self._ltf_bar_type.instrument_id != self._originial_bar_type.instrument_id:
+                    raise ValueError("ltf_bar_type and original_bar_type must use the same instrument")
         if not self._htf_bar_type.is_composite():
             raise ValueError("htf_bar_type must be passed as a composite bar type")
         if not self._htf_bar_type.is_internally_aggregated():
             raise ValueError("htf_bar_type must be internally aggregated")
-        if not self._ltf_bar_type.is_externally_aggregated():
-            raise ValueError("ltf_bar_type must be externally aggregated")
+        if not self._ltf_bar_type.is_composite():
+            raise ValueError("ltf_bar_type must be passed as a composite bar type")
+        if not self._ltf_bar_type.is_internally_aggregated():
+            raise ValueError("ltf_bar_type must be internally aggregated")
+        if not self._original_bar_type.is_externally_aggregated():
+            raise ValueError("original_bar_type must be externally aggregated")
         if not self._htf_bar_type.spec.is_time_aggregated() or not self._ltf_bar_type.spec.is_time_aggregated():
             raise ValueError("htf_bar_type and ltf_bar_type must be time-aggregated bars")
 
         htf_interval_ns = self._htf_bar_type.spec.get_interval_ns()
         ltf_interval_ns = self._ltf_bar_type.spec.get_interval_ns()
+        original_interval_ns = self._original_bar_type.spec.get_interval_ns()
         if htf_interval_ns <= ltf_interval_ns:
             raise ValueError("htf_bar_type interval must be greater than ltf_bar_type interval")
-        if htf_interval_ns % ltf_interval_ns != 0:
-            raise ValueError("htf_bar_type interval must be an exact multiple of ltf_bar_type interval")
-        if self._htf_bar_type.composite().standard() != self._ltf_bar_type.standard():
-            raise ValueError("htf_bar_type composite source must match ltf_bar_type")
+        if htf_interval_ns % original_interval_ns != 0:
+            raise ValueError("htf_bar_type interval must be an exact multiple of original_bar_type interval")
+        if ltf_interval_ns % original_interval_ns != 0:
+             raise ValueError("ltf_bar_type interval must be an exact multiple of original_bar_type interval")
+        if self._htf_bar_type.composite().standard() != self._original_bar_type.standard():
+            raise ValueError("htf_bar_type composite source must match original_bar_type")
+        if self._ltf_bar_type.composite().standard() != self._original_bar_type.standard():
+             raise ValueError("ltf_bar_type composite source must match original_bar_type")
 
     def _evaluate_signal(self, last_ltf_bar: Bar) -> None:
         if len(self._ltf_bars) < 3:
