@@ -16,7 +16,6 @@ from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.model.enums import TriggerType
 from nautilus_trader.model.identifiers import AccountId
 from nautilus_trader.model.identifiers import ClientOrderId
-from nautilus_trader.model.identifiers import PositionId
 from nautilus_trader.model.identifiers import TradeId
 from nautilus_trader.model.identifiers import VenueOrderId
 from nautilus_trader.model.instruments import Instrument
@@ -84,7 +83,6 @@ def parse_order_report(
         ts_last=ts_last,
         ts_init=ts_init,
         client_order_id=client_order_id,
-        venue_position_id=_position_id(int(order["accountId"]), int(order["contractId"])),
         expire_time=parse_expire_time(version.get("expireTime")),
         price=instrument.make_price(float(version["price"])) if version.get("price") is not None else None,
         trigger_price=(
@@ -101,7 +99,6 @@ def parse_fill_report(
     execution: dict[str, Any],
     instrument: Instrument,
     account_id: AccountId,
-    tradovate_account_id: int,
     client_order_id: ClientOrderId | None,
     ts_init: int,
 ) -> FillReport:
@@ -120,7 +117,6 @@ def parse_fill_report(
         ts_init=ts_init,
         avg_px=_decimal_or_none(execution.get("avgPx")),
         client_order_id=client_order_id,
-        venue_position_id=_position_id(tradovate_account_id, int(fill["contractId"])),
     )
 
 
@@ -144,7 +140,6 @@ def parse_position_report(
         report_id=UUID4(),
         ts_last=parse_timestamp_ns(position.get("timestamp"), ts_init),
         ts_init=ts_init,
-        venue_position_id=_position_id(int(position["accountId"]), int(position["contractId"])),
         avg_px_open=_decimal_or_none(position.get("netPrice")) if net_position else None,
     )
 
@@ -228,10 +223,6 @@ def _order_side(value: str) -> OrderSide:
     if value == "Sell":
         return OrderSide.SELL
     raise ValueError(f"Unsupported Tradovate order action: {value}")
-
-
-def _position_id(account_id: int, contract_id: int) -> PositionId:
-    return PositionId(f"{account_id}-{contract_id}")
 
 
 def _decimal_or_none(value: Any) -> Decimal | None:

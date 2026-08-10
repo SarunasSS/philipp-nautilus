@@ -117,18 +117,21 @@ uv run python main.py live \
 
 The live adapter currently supports external LAST bars only. The example contract expires, so replace `NQU6` with a currently listed contract when necessary. Tradovate API-key **Market Data: Read Only** permission and an ordinary display-data subscription do not by themselves prove that CME non-display API data is enabled; `Symbol is inaccessible` for valid CME symbols must be resolved with Tradovate support. See [docs/Tradovate_API.md](docs/Tradovate_API.md) for the verified diagnostic and protocol details.
 
-Run an active execution-adapter test while retaining the same instrument request and bar subscription behavior:
+Run an active execution-adapter test using Databento bars and a separate Tradovate execution instrument:
 
 ```bash
 uv run python main.py live \
   --environment demo \
   execute run \
-  --bar-type NQU6.TRADOVATE-1-MINUTE-LAST-EXTERNAL \
+  --bar-type MNQU6.GLBX-1-MINUTE-LAST-EXTERNAL \
+  --instrument-id MNQU6.TRADOVATE \
   --case entry-exit \
   --quantity 1
 ```
 
-This command submits a market buy, waits for its fill, and then submits a market sell for the filled quantity. It places real orders in the selected Tradovate environment. Wait for the `completed` log before stopping the node; an interruption between fills requires checking and flattening the account manually. The currently supported case is `entry-exit`.
+This command subscribes to Databento bars, submits a Tradovate market buy, waits for its fill, and then submits a Tradovate market sell for the filled quantity. Omit `--instrument-id` to trade the instrument contained in `--bar-type`. It places real orders in the selected Tradovate environment. Wait for the `completed` log before stopping the node; an interruption between fills requires checking and flattening the account manually. The currently supported case is `entry-exit`.
+
+Databento replaces only the market-data source. A Tradovate `401 Access is denied` response from `/order/placeorder` still means the authenticated Tradovate API user does not have permission to submit that order; verify order-write access and the selected demo account in the API-key configuration.
 
 Run the generic subscribe strategy through Nautilus's built-in Databento adapter. The strategy first requests the instrument definition, then subscribes to its live one-minute bars:
 

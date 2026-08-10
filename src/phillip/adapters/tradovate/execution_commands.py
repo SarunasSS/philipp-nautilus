@@ -42,6 +42,7 @@ _TIME_IN_FORCE = {
 class TradovateOrderCommandClient(LiveExecutionClient):
     _http_client: TradovateHttpClient
     _tradovate_account_id: int | None
+    _tradovate_account_spec: str | None
 
     async def _update_account_state(self) -> None:
         raise NotImplementedError
@@ -142,10 +143,14 @@ class TradovateOrderCommandClient(LiveExecutionClient):
                 ts_event=self._clock.timestamp_ns(),
             )
             return
-        if self._tradovate_account_id is None:
+        if self._tradovate_account_id is None or self._tradovate_account_spec is None:
             raise RuntimeError("Tradovate execution client is not connected")
         try:
-            payload = build_place_order_payload(order, self._tradovate_account_id)
+            payload = build_place_order_payload(
+                order,
+                self._tradovate_account_id,
+                self._tradovate_account_spec,
+            )
         except ValueError as exc:
             self.generate_order_denied(
                 strategy_id=order.strategy_id,
@@ -215,7 +220,23 @@ class TradovateOrderCommandClient(LiveExecutionClient):
         )
 
 
-def build_place_order_payload(order: Order, account_id: int) -> dict[str, Any]:
+def build_place_order_payload(
+    order: Order,
+    account_id: int,
+    account_spec: str,
+) -> dict[str, Any]:
+    payload = _build_order_payload(order)
+    payload.update(
+        accountSpec=account_spec,
+        accountId=account_id,
+        action="Buy" if order.side == OrderSide.BUY else "Sell",
+        symbol=order.instrument_id.symbol.value,
+        isAutomated=True,
+    )
+    return payload
+
+
+def _build_order_payload(order: Order) -> dict[str, Any]:
     try:
         order_type = _ORDER_TYPES[order.order_type]
         time_in_force = _TIME_IN_FORCE[order.time_in_force]
@@ -232,14 +253,10 @@ def build_place_order_payload(order: Order, account_id: int) -> dict[str, Any]:
         raise ValueError("Tradovate client order IDs cannot exceed 64 characters")
 
     payload: dict[str, Any] = {
-        "accountId": account_id,
-        "action": "Buy" if order.side == OrderSide.BUY else "Sell",
-        "symbol": order.instrument_id.symbol.value,
         "orderQty": quantity,
         "orderType": order_type,
         "timeInForce": time_in_force,
         "clOrdId": client_order_id,
-        "isAutomated": True,
     }
     if order.order_type in {OrderType.LIMIT, OrderType.STOP_LIMIT}:
         payload["price"] = order.price.as_double()
@@ -259,11 +276,7 @@ def build_modify_order_payload(
     price: Any,
     trigger_price: Any,
 ) -> dict[str, Any]:
-    payload = build_place_order_payload(order, account_id=0)
-    payload.pop("accountId")
-    payload.pop("action")
-    payload.pop("symbol")
-    payload.pop("isAutomated")
+    payload = _build_order_payload(order)
     payload["orderId"] = venue_order_id
 
     if quantity is not None:

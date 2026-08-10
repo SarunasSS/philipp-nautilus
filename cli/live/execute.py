@@ -24,7 +24,7 @@ def _run_execute(
         typer.Option(
             "--bar-type",
             "-b",
-            help="External bar type to subscribe to and trade",
+            help="External bar type to subscribe to",
         ),
     ],
     case: Annotated[
@@ -35,6 +35,13 @@ def _run_execute(
             case_sensitive=False,
         ),
     ],
+    instrument_id: Annotated[
+        str | None,
+        typer.Option(
+            "--instrument-id",
+            help="Execution instrument; defaults to the bar type instrument",
+        ),
+    ] = None,
     quantity: Annotated[
         float,
         typer.Option("--quantity", "-q", min=0.0, help="Order quantity"),
@@ -54,6 +61,7 @@ def _run_execute(
             config=ExecuteStrategyConfig(
                 bar_type=bar_type,
                 case=case.value,
+                instrument_id=instrument_id,
                 quantity=quantity,
                 timeout=timeout,
                 delay=delay,
