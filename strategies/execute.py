@@ -6,6 +6,7 @@ from enum import Enum
 
 from nautilus_trader.model.enums import OrderSide
 from nautilus_trader.model.enums import OrderStatus
+from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.model.orders import Order
@@ -22,6 +23,7 @@ class ExecutionCase(str, Enum):
 
 class ExecuteStrategyConfig(SubscribeStrategyConfig, frozen=True):
     case: str
+    instrument_id: str | None = None
     quantity: float = 1.0
     timeout: float = 10.0
     delay: float = 0.0
@@ -39,6 +41,12 @@ class ExecuteStrategy(SubscribeStrategy):
         if config.delay < 0:
             raise ValueError("delay must be zero or greater")
 
+        self._instrument_id = (
+            InstrumentId.from_str(config.instrument_id)
+            if config.instrument_id
+            else self._bar_type.instrument_id
+        )
+        self._execution_instrument: Instrument | None = None
         self._execution_loop: asyncio.AbstractEventLoop | None = None
         self._execution_task: asyncio.Task[None] | None = None
         self._starting_position = 0.0
@@ -47,15 +55,25 @@ class ExecuteStrategy(SubscribeStrategy):
         self._execution_loop = asyncio.get_running_loop()
         self._starting_position = self._position_quantity()
         super().on_start()
+        if self._instrument_id != self._bar_type.instrument_id:
+            self.request_instrument(self._instrument_id)
 
     def on_instrument(self, instrument: Instrument) -> None:
         super().on_instrument(instrument)
-        if instrument.id != self._bar_type.instrument_id or self._execution_task is not None:
+        if instrument.id == self._instrument_id:
+            self._execution_instrument = instrument
+        if (
+            not self._subscribed
+            or self._execution_instrument is None
+            or self._execution_task is not None
+        ):
             return
         if self._execution_loop is None:
             raise RuntimeError("ExecuteStrategy requires an active Nautilus asyncio event loop")
 
-        self._execution_task = self._execution_loop.create_task(self._run_case(instrument))
+        self._execution_task = self._execution_loop.create_task(
+            self._run_case(self._execution_instrument),
+        )
 
     async def _run_case(self, instrument: Instrument) -> None:
         case = ExecutionCase(self.config.case)
@@ -153,7 +171,7 @@ class ExecuteStrategy(SubscribeStrategy):
     def _position_quantity(self) -> float:
         return sum(
             float(position.signed_qty)
-            for position in self.cache.positions(instrument_id=self._bar_type.instrument_id)
+            for position in self.cache.positions(instrument_id=self._instrument_id)
         )
 
     def on_stop(self) -> None:

@@ -148,7 +148,6 @@ class TradovateReportProvider:
                     execution,
                     instrument,
                     self._account_id,
-                    self._tradovate_account_id,
                     resolved_client_order_id,
                     self._clock.timestamp_ns(),
                 ),

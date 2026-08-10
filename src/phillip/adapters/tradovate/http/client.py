@@ -198,7 +198,15 @@ class TradovateHttpClient:
         return self._decode_response(response)
 
     def _decode_response(self, response: HttpResponse) -> Any:
-        decoded = msgspec.json.decode(response.body) if response.body else {}
+        try:
+            decoded = msgspec.json.decode(response.body) if response.body else {}
+        except msgspec.DecodeError as exc:
+            body = response.body.decode("utf-8", errors="replace").strip()
+            raise TradovateApiError(
+                body or "Tradovate returned a non-JSON response",
+                status=response.status,
+                details=body,
+            ) from exc
         if response.status < 200 or response.status >= 300:
             message = decoded.get("errorText") if isinstance(decoded, dict) else None
             raise TradovateApiError(message or str(decoded), status=response.status, details=decoded)

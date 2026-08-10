@@ -79,11 +79,11 @@ class TradovateExecutionClient(TradovateOrderCommandClient):
             request_timeout_secs=config.request_timeout_secs,
         )
         self._tradovate_account_id: int | None = None
+        self._tradovate_account_spec: str | None = None
         self._report_provider: TradovateReportProvider | None = None
         self._refresh_task: asyncio.Task[None] | None = None
         self._account_refresh_requested = False
         self._execution_refresh_requested = False
-        self._seen_fill_ids: set[str] = set()
 
     async def _connect(self) -> None:
         access_token = await self._http_client.get_access_token()
@@ -108,7 +108,12 @@ class TradovateExecutionClient(TradovateOrderCommandClient):
                 f"Multiple Tradovate accounts are available ({account_ids}); set TRADOVATE_ACCOUNT_ID",
             )
 
+        account_spec = str(selected.get("name", ""))
+        if not account_spec:
+            raise ValueError("Selected Tradovate account does not have a name")
+
         self._tradovate_account_id = int(selected["id"])
+        self._tradovate_account_spec = account_spec
         self._set_account_id(AccountId(f"TRADOVATE-{self._tradovate_account_id}"))
         self._report_provider = TradovateReportProvider(
             client=self._http_client,
@@ -164,7 +169,6 @@ class TradovateExecutionClient(TradovateOrderCommandClient):
             start=command.start,
             end=command.end,
         )
-        self._seen_fill_ids.update(report.trade_id.value for report in reports)
         return reports
 
     async def generate_position_status_reports(
@@ -182,7 +186,6 @@ class TradovateExecutionClient(TradovateOrderCommandClient):
             reports.fill_reports(),
             reports.position_reports(),
         )
-        self._seen_fill_ids.update(report.trade_id.value for report in fill_reports)
         mass_status = ExecutionMassStatus(
             client_id=self.id,
             account_id=self.account_id,
@@ -270,20 +273,7 @@ class TradovateExecutionClient(TradovateOrderCommandClient):
                 if refresh_account:
                     await self._update_account_state()
                 if refresh_execution:
-                    report_provider = self._require_reports()
-                    order_reports, fill_reports, position_reports = await asyncio.gather(
-                        report_provider.order_reports(),
-                        report_provider.fill_reports(),
-                        report_provider.position_reports(),
-                    )
-                    for report in order_reports:
-                        self._send_order_status_report(report)
-                    for report in fill_reports:
-                        if report.trade_id.value not in self._seen_fill_ids:
-                            self._seen_fill_ids.add(report.trade_id.value)
-                            self._send_fill_report(report)
-                    for report in position_reports:
-                        self._send_position_status_report(report)
+                    self._send_mass_status_report(await self.generate_mass_status())
         except asyncio.CancelledError:
             raise
         except Exception as exc:
