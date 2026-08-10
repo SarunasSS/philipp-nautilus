@@ -91,12 +91,13 @@ Each backtest exports Nautilus order, order-fill, fill, position, and account re
 - `<strategy>-tearsheet.html` contains run information, performance statistics, equity, drawdown, periodic returns, return distribution, and rolling Sharpe charts.
 - `<strategy>-bars-with-fills.html` contains candlesticks with buy and sell fill markers.
 
-The bars-with-fills chart retains the latest 10,000 bars by default. Set `--chart-bar-limit` before the strategy command to review a larger or smaller window, or pass `--no-visualize` to export only CSV reports:
+The bars-with-fills chart uses the selected catalog bar type and retains its latest 10,000 bars by default. Set `--chart-bar-type` to chart another bar type cached during the run, such as the HTF composite bars produced by the HTF Sweep/CISD strategy. Composite inputs are resolved to the standard bar type under which Nautilus caches the generated bars. Set `--chart-bar-limit` to review a larger or smaller window, or pass `--no-visualize` to skip HTML generation:
 
 ```bash
 uv run python main.py backtest \
   --start 2026-01-01 \
   --end 2026-06-01 \
+  --chart-bar-type NQ.c.0.GLBX-15-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL \
   --chart-bar-limit 150000 \
   htf-sweep-cisd run \
   --htf-bar-type NQ.c.0.GLBX-15-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL \
