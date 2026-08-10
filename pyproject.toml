@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "databento>=0.57,<1",
-    "nautilus_trader>=1.228,<1.229",
+    "nautilus_trader[visualization]>=1.228,<1.229",
     "python-dotenv>=1.2,<2",
     "typer>=0.20,<0.21",
 ]
