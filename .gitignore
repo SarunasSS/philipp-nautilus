@@ -7,8 +7,14 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.egg-info/
+build/
+dist/
 
 
 data/
 docs/
 logs/
+onboarding/
+configs/k8s/live/overlays/alphanet/namespace.yaml
+configs/k8s/live/overlays/alphanet/philipp-access.yaml
+configs/k8s/live/overlays/alphanet/README.md

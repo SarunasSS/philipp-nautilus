@@ -1,0 +1,11 @@
+**
+!Dockerfile
+!pyproject.toml
+!README.md
+!main.py
+!cli/
+!cli/**
+!src/
+!src/**
+!strategies/
+!strategies/**

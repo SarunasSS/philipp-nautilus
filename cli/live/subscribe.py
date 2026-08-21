@@ -23,7 +23,7 @@ def _run_subscribe(
         typer.Option(
             "--bar-type",
             "-b",
-            help="External bar type to subscribe to",
+            help="Bar type to subscribe to",
         ),
     ],
 ) -> None:

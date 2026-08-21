@@ -15,12 +15,6 @@ cli/
     ├── __init__.py      # Shared live callback and runner
     ├── execute.py       # Case-selected execution adapter tests
     └── subscribe.py     # Generic bar subscription command
-docs/
-├── agents/              # Work notes for resumability
-│   └── strategy_visualization_options.md  # Charting options and recommendation
-├── Strategy_fileHTFSweep+CISD.docx
-├── Tradovate_API.md     # Sanitized and supplemented Tradovate API reference
-└── strategy_flow.md     # Explicit HTF sweep + CISD strategy flow
 src/phillip/adapters/tradovate/
 ├── data.py              # Bars-only Nautilus live data client
 ├── execution.py         # Account lifecycle, user stream, and reconciliation
@@ -147,3 +141,17 @@ not sufficient: Nautilus can resolve the delayed historical instrument definitio
 log `Subscribed bars`, while the live gateway still sends no records. Databento's
 official client reports this state explicitly as
 `A live data license is required to access GLBX.MDP3`.
+
+## Alphanet deployment
+
+The reviewable Alphanet Docker and Kubernetes configuration is under
+[`configs/k8s/live/overlays/alphanet`](configs/k8s/live/overlays/alphanet/README.md).
+The credential-safe package instructions for Philipp are under
+[`onboarding/philipp`](onboarding/philipp/README.md). Real WireGuard and
+kubeconfig files are intentionally excluded from Git.
+
+The Alphanet subscriber uses
+`MNQU6.GLBX-5-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL`: Databento supplies
+one-minute external bars and Nautilus aggregates them into five-minute bars.
+The GAR image is
+`europe-west1-docker.pkg.dev/oned-works/oned/philipp-trading-dev`.
