@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+  - name: Philipp Trading
+    orgId: 1
+    folder: Philipp Trading
+    type: file
+    disableDeletion: true
+    editable: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards

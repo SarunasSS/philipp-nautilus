@@ -1,0 +1,36 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - alloy-rbac.yaml
+  - alloy.yaml
+  - grafana.yaml
+  - loki.yaml
+
+configMapGenerator:
+  - name: philipp-command-control-config
+    literals:
+      - CLUSTER_NAME=review-required
+      - ENVIRONMENT=review-required
+      - GRAFANA_ROOT_URL=https://review-required
+  - name: philipp-alloy-config
+    files:
+      - config.alloy=config/alloy.config
+  - name: philipp-loki-config
+    files:
+      - config.yaml=config/loki.yaml
+  - name: philipp-grafana-provisioning
+    files:
+      - datasource.yaml=config/grafana-datasource.yaml
+      - dashboards.yaml=config/grafana-dashboards.yaml
+  - name: philipp-grafana-dashboard
+    files:
+      - philipp-operations.json=config/philipp-operations.json
+
+images:
+  - name: grafana/alloy
+    newTag: review-required
+  - name: grafana/grafana
+    newTag: review-required
+  - name: grafana/loki
+    newTag: review-required

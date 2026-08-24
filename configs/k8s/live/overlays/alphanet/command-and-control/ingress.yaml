@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: philipp-grafana
+  labels:
+    app.kubernetes.io/name: philipp-grafana
+    app.kubernetes.io/part-of: philipp-command-and-control
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - dashboard.dev.philipp-trading.apps.1d.works
+      secretName: dashboard-dev-philipp-trading-apps-1d-works-tls
+  rules:
+    - host: dashboard.dev.philipp-trading.apps.1d.works
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: philipp-grafana
+                port:
+                  number: 80
