@@ -1,0 +1,858 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "strategy-control"
+      },
+      "description": "Loads the selected strategy's allow-listed fields, validates the update, writes its ConfigMap, and restarts only its mapped Deployment.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 14,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "buttonGroup": {
+          "orientation": "center",
+          "size": "md"
+        },
+        "confirmModal": {
+          "body": "Saving replaces the selected strategy's runtime configuration and restarts its Deployment.",
+          "cancel": "Cancel",
+          "columns": {
+            "include": [
+              "name",
+              "oldValue",
+              "newValue"
+            ],
+            "name": "Setting",
+            "newValue": "New value",
+            "oldValue": "Current value"
+          },
+          "confirm": "Update and restart",
+          "elementDisplayMode": "modified",
+          "title": "Confirm strategy restart"
+        },
+        "elementValueChanged": "const editable = context.panel.elements.filter((element) => element.id !== 'RESOURCE_VERSION');\nconst resourceVersion = context.panel.elements.find((element) => element.id === 'RESOURCE_VERSION')?.value;\nconst valid = editable.length > 0 && editable.every((element) => {\n  const value = element.value;\n  return value !== undefined && value !== null && String(value).length > 0;\n});\n\nif (valid && resourceVersion) {\n  context.panel.enableSubmit();\n} else {\n  context.panel.disableSubmit();\n}",
+        "elements": [],
+        "initial": {
+          "code": "const frame = context.panel.data?.series?.find((series) =>\n  series.fields?.some((field) => field.name === 'form_json')\n);\nconst field = frame?.fields?.find((candidate) => candidate.name === 'form_json');\nconst serialized = field?.values?.get?.(0) ?? field?.values?.[0];\n\nif (!serialized) {\n  context.panel.setError('The strategy form model was not returned. Refresh the dashboard and check the Strategy Control datasource.');\n  context.panel.disableSubmit();\n  return;\n}\n\nlet model;\ntry {\n  model = JSON.parse(serialized);\n} catch (error) {\n  context.panel.setError(`The strategy form model is invalid: ${error.message}`);\n  context.panel.disableSubmit();\n  return;\n}\n\nconst elements = model.fields.map((field, index) => {\n  const base = {\n    uid: `${model.strategy_id}-${field.key}-${index}`,\n    id: field.key,\n    title: field.label,\n    type: field.type,\n    labelWidth: 12,\n    width: 42,\n    tooltip: field.tooltip || '',\n    section: 'runtime',\n    unit: '',\n    value: model.values[field.key] ?? '',\n    background: '',\n    labelBackground: '',\n    labelColor: '',\n    helpers: {\n      showIf: () => true,\n      disableIf: () => false,\n      getOptions: () => (field.options || []).map((value) => ({ value, label: value })),\n    },\n  };\n\n  if (field.type === 'select') {\n    return { ...base, optionsSource: 'Custom', allowCustomValue: false };\n  }\n  return base;\n});\n\nelements.push({\n  uid: `${model.strategy_id}-resource-version`,\n  id: 'RESOURCE_VERSION',\n  title: 'Config version',\n  type: 'disabled',\n  labelWidth: 12,\n  width: 42,\n  tooltip: 'Kubernetes resourceVersion used to reject stale edits.',\n  section: 'safety',\n  unit: '',\n  value: model.resource_version,\n  background: '',\n  labelBackground: '',\n  labelColor: '',\n  helpers: { showIf: () => true, disableIf: () => true, getOptions: () => [] },\n});\n\nconst values = { ...model.values, RESOURCE_VERSION: model.resource_version };\ncontext.panel.onChangeElements(elements);\ncontext.panel.setInitial(values);\ncontext.panel.setFormValue(values);\ncontext.panel.enableSubmit();",
+          "contentType": "application/json",
+          "datasource": "strategy-control",
+          "getPayload": "return {};",
+          "highlight": true,
+          "highlightColor": "orange",
+          "method": "query",
+          "payload": {
+            "columns": [
+              {
+                "selector": "form_json",
+                "text": "form_json",
+                "type": "string"
+              }
+            ],
+            "filters": [],
+            "format": "table",
+            "parser": "backend",
+            "refId": "A",
+            "root_selector": "",
+            "source": "url",
+            "type": "json",
+            "url": "/strategies/${strategy}/config",
+            "url_options": {
+              "data": "",
+              "method": "GET"
+            }
+          }
+        },
+        "layout": {
+          "orientation": "horizontal",
+          "padding": 12,
+          "sectionVariant": "default",
+          "sections": [
+            {
+              "id": "runtime",
+              "name": "Runtime configuration"
+            },
+            {
+              "id": "safety",
+              "name": "Conflict protection"
+            }
+          ],
+          "variant": "single"
+        },
+        "reset": {
+          "backgroundColor": "transparent",
+          "foregroundColor": "",
+          "icon": "process",
+          "text": "Reload current values",
+          "variant": "secondary"
+        },
+        "resetAction": {
+          "code": "",
+          "confirm": false,
+          "getPayload": "return {};",
+          "mode": "initial",
+          "payload": {}
+        },
+        "saveDefault": {
+          "icon": "save",
+          "text": "Save default",
+          "variant": "hidden"
+        },
+        "submit": {
+          "backgroundColor": "",
+          "foregroundColor": "",
+          "icon": "sync",
+          "text": "Update and restart",
+          "variant": "primary"
+        },
+        "sync": true,
+        "update": {
+          "code": "if (context.panel.response && context.panel.response.state === 'Done') {\n  context.grafana.notifySuccess(['Strategy control', 'Configuration updated and the selected strategy restarted.']);\n  context.panel.initialRequest();\n  context.grafana.refresh();\n  return;\n}\n\ncontext.grafana.notifyError(['Strategy control', 'The update failed. Reload current values before retrying.']);",
+          "confirm": true,
+          "contentType": "application/json",
+          "datasource": "strategy-control",
+          "getPayload": "const values = {};\nlet resourceVersion = '';\ncontext.panel.elements.forEach((element) => {\n  if (element.id === 'RESOURCE_VERSION') {\n    resourceVersion = String(element.value ?? '');\n    return;\n  }\n  values[element.id] = String(element.value ?? '');\n});\nconst body = JSON.stringify({ resource_version: resourceVersion, values });\nreturn {\n  BODY: JSON.stringify(body).slice(1, -1),\n};",
+          "method": "datasource",
+          "payload": {
+            "columns": [
+              {
+                "selector": "resource_version",
+                "text": "resource_version",
+                "type": "string"
+              },
+              {
+                "selector": "restarted_at",
+                "text": "restarted_at",
+                "type": "string"
+              }
+            ],
+            "filters": [],
+            "format": "table",
+            "parser": "backend",
+            "refId": "A",
+            "root_selector": "",
+            "source": "url",
+            "type": "json",
+            "url": "/strategies/${strategy}/config",
+            "url_options": {
+              "body_content_type": "application/json",
+              "body_type": "raw",
+              "data": "${payload.BODY}",
+              "method": "POST"
+            }
+          },
+          "payloadMode": "custom"
+        },
+        "updateEnabled": "auto"
+      },
+      "pluginVersion": "6.3.5",
+      "targets": [
+        {
+          "columns": [
+            {
+              "selector": "form_json",
+              "text": "form_json",
+              "type": "string"
+            }
+          ],
+          "filters": [],
+          "format": "table",
+          "parser": "backend",
+          "refId": "A",
+          "root_selector": "",
+          "source": "url",
+          "type": "json",
+          "url": "/strategies/${strategy}/config",
+          "url_options": {
+            "data": "",
+            "method": "GET"
+          }
+        }
+      ],
+      "title": "${strategy:text} configuration",
+      "type": "volkovlabs-form-panel"
+    },
+    {
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "strategy-control"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "red",
+                  "index": 2,
+                  "text": "Degraded"
+                },
+                "1": {
+                  "color": "blue",
+                  "index": 3,
+                  "text": "Stopped"
+                },
+                "2": {
+                  "color": "yellow",
+                  "index": 1,
+                  "text": "Progressing"
+                },
+                "3": {
+                  "color": "green",
+                  "index": 0,
+                  "text": "Ready"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 5,
+        "x": 14,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "columns": [
+            {
+              "selector": "state_code",
+              "text": "State",
+              "type": "number"
+            }
+          ],
+          "filters": [],
+          "format": "table",
+          "parser": "backend",
+          "refId": "A",
+          "root_selector": "",
+          "source": "url",
+          "type": "json",
+          "url": "/strategies/${strategy}/status",
+          "url_options": {
+            "data": "",
+            "method": "GET"
+          }
+        }
+      ],
+      "title": "Deployment state",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "strategy-control"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 5,
+        "x": 19,
+        "y": 0
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "columns": [
+            {
+              "selector": "ready_replicas",
+              "text": "Ready",
+              "type": "number"
+            }
+          ],
+          "filters": [],
+          "format": "table",
+          "parser": "backend",
+          "refId": "A",
+          "root_selector": "",
+          "source": "url",
+          "type": "json",
+          "url": "/strategies/${strategy}/status",
+          "url_options": {
+            "data": "",
+            "method": "GET"
+          }
+        }
+      ],
+      "title": "Ready replicas",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "strategy-control"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "green",
+            "mode": "fixed"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "dateTimeFromNow"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 5,
+        "x": 14,
+        "y": 3
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "columns": [
+            {
+              "selector": "restarted_at_unix_ms",
+              "text": "Restarted",
+              "type": "number"
+            }
+          ],
+          "filters": [],
+          "format": "table",
+          "parser": "backend",
+          "refId": "A",
+          "root_selector": "",
+          "source": "url",
+          "type": "json",
+          "url": "/strategies/${strategy}/status",
+          "url_options": {
+            "data": "",
+            "method": "GET"
+          }
+        }
+      ],
+      "title": "Last control restart",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "strategy-control"
+      },
+      "description": "Kubernetes Deployment spec version. It increases when the Deployment specification changes; it is not a restart count or health signal.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed-color"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 5,
+        "x": 19,
+        "y": 3
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "columns": [
+            {
+              "selector": "generation",
+              "text": "Generation",
+              "type": "number"
+            }
+          ],
+          "filters": [],
+          "format": "table",
+          "parser": "backend",
+          "refId": "A",
+          "root_selector": "",
+          "source": "url",
+          "type": "json",
+          "url": "/strategies/${strategy}/status",
+          "url_options": {
+            "data": "",
+            "method": "GET"
+          }
+        }
+      ],
+      "title": "Deployment generation",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 5,
+        "x": 14,
+        "y": 6
+      },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "sum(count_over_time({namespace=\"${strategy.namespace}\", component=\"strategy\", app=\"${strategy.log_app}\"}[5m])) or vector(0)",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Log lines / 5m",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 5,
+        "x": 19,
+        "y": 6
+      },
+      "id": 7,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "sum(count_over_time({namespace=\"${strategy.namespace}\", component=\"strategy\", app=\"${strategy.log_app}\"} |~ \"(?i)(\\\\[(error|critical)\\\\]|(^|[[:space:]])(level|severity)=(error|critical)([[:space:]]|$)|traceback|uncaught exception|fatal|panic)\" [15m])) or vector(0)",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "description": "Counts selected strategy log lines with ERROR or CRITICAL severity, fatal or panic messages, tracebacks, or uncaught exceptions within the last 15 minutes. WARN lines are excluded.",
+      "title": "Errors / 15m",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 25,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "hidden",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "sum(count_over_time({namespace=\"${strategy.namespace}\", component=\"strategy\", app=\"${strategy.log_app}\"}[$__interval]))",
+          "legendFormat": "log lines",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "description": "Log lines emitted per interval within the dashboard time range. This is a liveness and verbosity signal, not trading activity, trades, or P&L.",
+      "title": "Log activity",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 18,
+        "w": 24,
+        "x": 0,
+        "y": 13
+      },
+      "id": 10,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "{namespace=\"${strategy.namespace}\", component=\"strategy\", app=\"${strategy.log_app}\"}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "description": "Strategy logs within the dashboard time range. Check timestamps to distinguish live output from an idle strategy.",
+      "title": "Recent ${strategy:text} logs",
+      "type": "logs"
+    },
+    {
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 31
+      },
+      "id": 11,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "### Operational behavior\n\nThe strategy selector comes from the controller's allow-list; dashboard input never supplies Kubernetes resource names. Saving updates the selected ConfigMap and restarts only its mapped Deployment. Runtime changes are restored to Git values on the next strategy Kustomize apply, so copy intentional long-lived changes into the strategy overlay.",
+        "mode": "markdown"
+      },
+      "title": "Control boundary",
+      "type": "text"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 41,
+  "tags": [
+    "strategies",
+    "control",
+    "logs"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": true,
+          "text": "Subscribe",
+          "value": "subscribe"
+        },
+        "datasource": {
+          "type": "yesoreyeram-infinity-datasource",
+          "uid": "strategy-control"
+        },
+        "definition": "Strategies - Infinity JSON",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Strategy to control",
+        "multi": false,
+        "name": "strategy",
+        "options": [],
+        "query": {
+          "infinityQuery": {
+            "columns": [
+              {
+                "selector": "id",
+                "text": "__value",
+                "type": "string"
+              },
+              {
+                "selector": "display_name",
+                "text": "__text",
+                "type": "string"
+              },
+              {
+                "selector": "namespace",
+                "text": "namespace",
+                "type": "string"
+              },
+              {
+                "selector": "deployment",
+                "text": "deployment",
+                "type": "string"
+              },
+              {
+                "selector": "log_app",
+                "text": "log_app",
+                "type": "string"
+              }
+            ],
+            "filters": [],
+            "format": "table",
+            "parser": "backend",
+            "refId": "variable",
+            "root_selector": "",
+            "source": "url",
+            "type": "json",
+            "url": "/strategies",
+            "url_options": {
+              "data": "",
+              "method": "GET"
+            }
+          },
+          "query": "",
+          "queryType": "infinity"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "Strategy control",
+  "uid": "subscribe-control",
+  "version": 2
+}

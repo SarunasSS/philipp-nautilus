@@ -5,15 +5,12 @@ namespace: philipp-trading-dev
 
 resources:
   - ../../../base/strategies
+  - control-auth-external-secret.yaml
 
-configMapGenerator:
-  - name: philipp-subscribe-config
-    literals:
-      - TRADER_ID=PHILIPP-SUBSCRIBE-DEV-001
-      - LOG_LEVEL=INFO
-      - BAR_TYPE=MNQU6.GLBX-5-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL
+patches:
+  - path: subscribe-config-patch.yaml
 
 images:
-  - name: philipp-nautilus
+  - name: nautilus
     newName: europe-west1-docker.pkg.dev/oned-works/oned/philipp-trading-dev
-    newTag: 20260814-262c9a951fe9
+    newTag: 20260825-databento-preload-v1

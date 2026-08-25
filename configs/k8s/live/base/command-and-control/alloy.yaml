@@ -1,10 +1,10 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: philipp-alloy
+  name: alloy
   labels:
-    app.kubernetes.io/name: philipp-alloy
-    app.kubernetes.io/part-of: philipp-command-and-control
+    app.kubernetes.io/name: alloy
+    app.kubernetes.io/part-of: command-and-control
 spec:
   replicas: 1
   revisionHistoryLimit: 3
@@ -12,14 +12,14 @@ spec:
     type: Recreate
   selector:
     matchLabels:
-      app.kubernetes.io/name: philipp-alloy
+      app.kubernetes.io/name: alloy
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: philipp-alloy
-        app.kubernetes.io/part-of: philipp-command-and-control
+        app.kubernetes.io/name: alloy
+        app.kubernetes.io/part-of: command-and-control
     spec:
-      serviceAccountName: philipp-alloy
+      serviceAccountName: alloy
       automountServiceAccountToken: true
       terminationGracePeriodSeconds: 30
       securityContext:
@@ -48,15 +48,15 @@ spec:
             - name: CLUSTER_NAME
               valueFrom:
                 configMapKeyRef:
-                  name: philipp-command-control-config
+                  name: command-control-config
                   key: CLUSTER_NAME
             - name: ENVIRONMENT
               valueFrom:
                 configMapKeyRef:
-                  name: philipp-command-control-config
+                  name: command-control-config
                   key: ENVIRONMENT
             - name: LOKI_PUSH_URL
-              value: http://philipp-loki:3100/loki/api/v1/push
+              value: http://loki:3100/loki/api/v1/push
           ports:
             - name: http
               containerPort: 12345
@@ -99,7 +99,7 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: philipp-alloy-config
+            name: alloy-config
         - name: data
           emptyDir:
             sizeLimit: 512Mi

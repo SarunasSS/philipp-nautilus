@@ -4,6 +4,9 @@ import typer
 from typing import Annotated
 
 
+from nautilus_trader.model.data import BarType
+
+
 from strategies.subscribe import SubscribeStrategy
 from strategies.subscribe import SubscribeStrategyConfig
 
@@ -28,6 +31,7 @@ def _run_subscribe(
     ],
 ) -> None:
     _run_live(
+        data_instrument_ids=[BarType.from_str(bar_type).instrument_id],
         settings=_get_live_settings(ctx),
         strategy=SubscribeStrategy(
             config=SubscribeStrategyConfig(bar_type=bar_type),

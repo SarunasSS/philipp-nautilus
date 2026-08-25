@@ -29,6 +29,13 @@ strategies/
 ├── execute.py           # ExecuteStrategy subscription plus execution tests
 ├── htf_sweep_cisd.py    # HTF sweep + CISD managed trade strategy
 └── subscribe.py         # SubscribeStrategy requests and logs bars
+configs/k8s/live/
+├── base/
+│   ├── strategies/      # Reusable trading workload and narrow control API
+│   └── command-and-control/ # Reusable Grafana, Loki, and Alloy resources
+└── overlays/alphanet/
+    ├── strategies/      # Alphanet strategy configuration
+    └── command-and-control/ # Alphanet dashboard ingress and logging config
 ```
 
 ## Setup
@@ -108,7 +115,7 @@ uv run python main.py live \
   --bar-type NQU6.TRADOVATE-1-MINUTE-LAST-EXTERNAL
 ```
 
-The live adapter currently supports external LAST bars only. The example contract expires, so replace `NQU6` with a currently listed contract when necessary. Tradovate API-key **Market Data: Read Only** permission and an ordinary display-data subscription do not by themselves prove that CME non-display API data is enabled; `Symbol is inaccessible` for valid CME symbols must be resolved with Tradovate support. See [docs/Tradovate_API.md](docs/Tradovate_API.md) for the verified diagnostic and protocol details.
+The live adapter currently supports external LAST bars only. The example contract expires, so replace `NQU6` with a currently listed contract when necessary. Tradovate API-key **Market Data: Read Only** permission and an ordinary display-data subscription do not by themselves prove that CME non-display API data is enabled; `Symbol is inaccessible` for valid CME symbols must be resolved with Tradovate support.
 
 Run an active execution-adapter test using Databento bars and a separate Tradovate execution instrument:
 
@@ -136,6 +143,8 @@ uv run python main.py live \
 
 There is no provider selector. Nautilus routes `TRADOVATE` instruments to the venue-bound custom adapter and uses Databento as the default client for exchange venues such as `GLBX`. The live Databento client retains the dataset venue (`GLBX`) so its instrument IDs match the catalog and CLI examples. Replace `MNQU6` when that futures contract is no longer current.
 
+At live-node startup, the CLI derives the selected instrument ID from `--bar-type` and preloads it into both the Databento client and instrument provider. This makes price precision available before the strategy subscribes. A later `request_instrument()` still returns the definition to the strategy, but it is not relied upon to populate the provider cache in NautilusTrader 1.228.0.
+
 The Databento API key must have a live `GLBX.MDP3` license. Historical access alone is
 not sufficient: Nautilus can resolve the delayed historical instrument definition and
 log `Subscribed bars`, while the live gateway still sends no records. Databento's
@@ -144,11 +153,27 @@ official client reports this state explicitly as
 
 ## Alphanet deployment
 
-The reviewable Alphanet Docker and Kubernetes configuration is under
-[`configs/k8s/live/overlays/alphanet`](configs/k8s/live/overlays/alphanet/README.md).
-The credential-safe package instructions for Philipp are under
-[`onboarding/philipp`](onboarding/philipp/README.md). Real WireGuard and
-kubeconfig files are intentionally excluded from Git.
+The reviewable Alphanet Docker and Kubernetes configuration is documented in
+[`configs/k8s/live/README.md`](configs/k8s/live/README.md). Strategy resources
+and the command-and-control stack have independent base and Alphanet overlay
+folders, while the parent Kustomization deploys both into
+`philipp-trading-dev` for now.
+
+Grafana is exposed over TLS at
+<https://dashboard.dev.philipp-trading.apps.1d.works>. Namespace-local Alloy
+collection sends logs to Loki, whose persistent storage is limited to `2Gi`
+with seven-day retention. The Grafana admin password is synchronized from the
+`philipp-trading-dev-grafana-admin-password` GCP secret and is never committed.
+The managed `philipp` Viewer password is likewise synchronized from
+`philipp-trading-dev-grafana-philipp-password`; the account is recreated when a
+fresh ephemeral Grafana pod starts. Strategy control is the default home
+dashboard and the Viewer can browse all dashboards provisioned from Git.
+The provisioned `Strategies / Strategy control` dashboard uses an allow-listed
+strategy registry to select a ConfigMap and Deployment without accepting raw
+Kubernetes resource names from the browser. It combines schema-driven runtime
+controls with rollout health, log activity and error statistics, deployment
+details, and the selected strategy's live logs. Its resource-name-scoped API
+and separate bearer token remain internal to the namespace.
 
 The Alphanet subscriber uses
 `MNQU6.GLBX-5-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL`: Databento supplies

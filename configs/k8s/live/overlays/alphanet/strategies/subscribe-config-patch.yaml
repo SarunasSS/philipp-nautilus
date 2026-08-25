@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: subscribe-config
+data:
+  TRADER_ID: PHILIPP-SUBSCRIBE-DEV-001
+  LOG_LEVEL: INFO
+  BAR_TYPE: MNQU6.GLBX-5-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL

@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: subscribe-config
+  labels:
+    app.kubernetes.io/name: subscribe
+    app.kubernetes.io/part-of: trading
+data:
+  TRADER_ID: REVIEW-REQUIRED
+  LOG_LEVEL: INFO
+  BAR_TYPE: REVIEW-REQUIRED.GLBX-1-MINUTE-LAST-EXTERNAL

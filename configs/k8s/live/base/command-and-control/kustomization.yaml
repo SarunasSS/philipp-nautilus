@@ -8,24 +8,28 @@ resources:
   - loki.yaml
 
 configMapGenerator:
-  - name: philipp-command-control-config
+  - name: command-control-config
     literals:
       - CLUSTER_NAME=review-required
       - ENVIRONMENT=review-required
       - GRAFANA_ROOT_URL=https://review-required
-  - name: philipp-alloy-config
+  - name: alloy-config
     files:
       - config.alloy=config/alloy.config
-  - name: philipp-loki-config
+  - name: loki-config
     files:
       - config.yaml=config/loki.yaml
-  - name: philipp-grafana-provisioning
+  - name: grafana-provisioning
     files:
       - datasource.yaml=config/grafana-datasource.yaml
       - dashboards.yaml=config/grafana-dashboards.yaml
-  - name: philipp-grafana-dashboard
+  - name: grafana-systems-dashboard
     files:
-      - philipp-operations.json=config/philipp-operations.json
+      - systems-logs.json=config/systems-logs.json
+  - name: grafana-strategies-dashboard
+    files:
+      - strategy-control.json=config/strategy-control.json
+      - strategies-logs.json=config/strategies-logs.json
 
 images:
   - name: grafana/alloy

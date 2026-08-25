@@ -3,8 +3,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: philipp-loki-data
   labels:
-    app.kubernetes.io/name: philipp-loki
-    app.kubernetes.io/part-of: philipp-command-and-control
+    app.kubernetes.io/name: loki
+    app.kubernetes.io/part-of: command-and-control
 spec:
   accessModes:
     - ReadWriteOnce
@@ -15,13 +15,13 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: philipp-loki
+  name: loki
   labels:
-    app.kubernetes.io/name: philipp-loki
-    app.kubernetes.io/part-of: philipp-command-and-control
+    app.kubernetes.io/name: loki
+    app.kubernetes.io/part-of: command-and-control
 spec:
   selector:
-    app.kubernetes.io/name: philipp-loki
+    app.kubernetes.io/name: loki
   ports:
     - name: http
       port: 3100
@@ -31,21 +31,21 @@ spec:
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: philipp-loki
+  name: loki
   labels:
-    app.kubernetes.io/name: philipp-loki
-    app.kubernetes.io/part-of: philipp-command-and-control
+    app.kubernetes.io/name: loki
+    app.kubernetes.io/part-of: command-and-control
 spec:
-  serviceName: philipp-loki
+  serviceName: loki
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: philipp-loki
+      app.kubernetes.io/name: loki
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: philipp-loki
-        app.kubernetes.io/part-of: philipp-command-and-control
+        app.kubernetes.io/name: loki
+        app.kubernetes.io/part-of: command-and-control
     spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
@@ -105,7 +105,7 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: philipp-loki-config
+            name: loki-config
         - name: data
           persistentVolumeClaim:
             claimName: philipp-loki-data

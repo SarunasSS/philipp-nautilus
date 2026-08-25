@@ -4,3 +4,10 @@ kind: Kustomization
 resources:
   - deployment.yaml
   - external-secret.yaml
+  - strategy-control.yaml
+  - subscribe-config.yaml
+
+configMapGenerator:
+  - name: strategy-registry
+    files:
+      - strategies.json=config/strategy-registry.json

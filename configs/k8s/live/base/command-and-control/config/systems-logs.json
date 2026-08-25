@@ -3,9 +3,6 @@
     "list": []
   },
   "editable": false,
-  "fiscalYearStartMonth": 0,
-  "graphTooltip": 0,
-  "links": [],
   "panels": [
     {
       "datasource": {
@@ -36,60 +33,74 @@
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "{namespace=\"$namespace\", pod=~\"$pod\"}",
+          "expr": "{namespace=\"$namespace\", component=\"system\", app=~\"$app\", pod=~\"$pod\"}",
           "queryType": "range",
           "refId": "A"
         }
       ],
-      "title": "Namespace logs",
+      "title": "Systems logs",
       "type": "logs"
     }
   ],
   "refresh": "10s",
   "schemaVersion": 41,
   "tags": [
-    "philipp-trading",
+    "systems",
     "logs"
   ],
   "templating": {
     "list": [
       {
-        "current": {},
         "datasource": {
           "type": "loki",
           "uid": "loki"
         },
-        "definition": "label_values(namespace)",
-        "hide": 0,
+        "definition": "label_values({component=\"system\"}, namespace)",
         "includeAll": false,
         "label": "Namespace",
         "name": "namespace",
-        "options": [],
-        "query": "label_values(namespace)",
+        "query": "label_values({component=\"system\"}, namespace)",
         "refresh": 1,
-        "regex": "",
-        "skipUrlSync": false,
         "sort": 1,
         "type": "query"
       },
       {
         "allValue": ".*",
-        "current": {},
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
         "datasource": {
           "type": "loki",
           "uid": "loki"
         },
-        "definition": "label_values({namespace=\"$namespace\"}, pod)",
-        "hide": 0,
+        "definition": "label_values({namespace=\"$namespace\", component=\"system\"}, app)",
+        "includeAll": true,
+        "label": "Application",
+        "name": "app",
+        "query": "label_values({namespace=\"$namespace\", component=\"system\"}, app)",
+        "refresh": 1,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "loki",
+          "uid": "loki"
+        },
+        "definition": "label_values({namespace=\"$namespace\", component=\"system\", app=~\"$app\"}, pod)",
         "includeAll": true,
         "label": "Pod",
-        "multi": true,
         "name": "pod",
-        "options": [],
-        "query": "label_values({namespace=\"$namespace\"}, pod)",
+        "query": "label_values({namespace=\"$namespace\", component=\"system\", app=~\"$app\"}, pod)",
         "refresh": 1,
-        "regex": "",
-        "skipUrlSync": false,
         "sort": 1,
         "type": "query"
       }
@@ -99,9 +110,8 @@
     "from": "now-1h",
     "to": "now"
   },
-  "timepicker": {},
   "timezone": "browser",
-  "title": "Philipp Trading Operations",
-  "uid": "philipp-operations",
+  "title": "Logs",
+  "uid": "systems-logs",
   "version": 1
 }

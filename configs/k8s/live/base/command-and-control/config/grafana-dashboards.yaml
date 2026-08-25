@@ -1,12 +1,21 @@
 apiVersion: 1
 
 providers:
-  - name: Philipp Trading
+  - name: Systems
     orgId: 1
-    folder: Philipp Trading
+    folder: Systems
     type: file
-    disableDeletion: true
+    disableDeletion: false
     editable: false
     updateIntervalSeconds: 30
     options:
-      path: /etc/grafana/dashboards
+      path: /etc/grafana/dashboards/systems
+  - name: Strategies
+    orgId: 1
+    folder: Strategies
+    type: file
+    disableDeletion: false
+    editable: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards/strategies

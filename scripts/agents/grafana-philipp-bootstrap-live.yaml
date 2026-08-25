@@ -1,0 +1,107 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: grafana-philipp-bootstrap
+  namespace: philipp-trading-dev
+  labels:
+    app.kubernetes.io/name: grafana-philipp-bootstrap
+    app.kubernetes.io/part-of: command-and-control
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: grafana-philipp-bootstrap
+        app.kubernetes.io/part-of: command-and-control
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472
+        runAsGroup: 472
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bootstrap
+          image: grafana/grafana:13.2.0
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              until curl --fail --silent http://philipp-grafana/api/health >/dev/null; do
+                sleep 2
+              done
+
+              lookup_status="$(curl --silent --show-error --output /tmp/philipp-user.json \
+                --write-out '%{http_code}' \
+                --user "admin:$GRAFANA_ADMIN_PASSWORD" \
+                --get --data-urlencode 'loginOrEmail=philipp' \
+                http://philipp-grafana/api/users/lookup)"
+
+              if [ "$lookup_status" = "404" ]; then
+                create_status="$(curl --silent --show-error --output /tmp/philipp-user.json \
+                  --write-out '%{http_code}' \
+                  --user "admin:$GRAFANA_ADMIN_PASSWORD" \
+                  --header 'Content-Type: application/json' \
+                  --data-binary "{\"name\":\"Philipp\",\"email\":\"philipp@example.invalid\",\"login\":\"philipp\",\"password\":\"$GRAFANA_PHILIPP_PASSWORD\",\"OrgId\":1}" \
+                  http://philipp-grafana/api/admin/users)"
+                if [ "$create_status" != "200" ]; then
+                  echo "Failed to create the managed Grafana user (HTTP $create_status)." >&2
+                  sed 's/"password":"[^"]*"/"password":"[redacted]"/' /tmp/philipp-user.json >&2
+                  exit 1
+                fi
+              else
+                test "$lookup_status" = "200"
+              fi
+
+              curl --fail --silent --show-error \
+                --user "philipp:$GRAFANA_PHILIPP_PASSWORD" \
+                http://philipp-grafana/api/user > /tmp/user.json
+              grep -q '"login":"philipp"' /tmp/user.json
+              grep -q '"isGrafanaAdmin":false' /tmp/user.json
+
+              curl --fail --silent --show-error \
+                --user "philipp:$GRAFANA_PHILIPP_PASSWORD" \
+                'http://philipp-grafana/api/search?type=dash-db&limit=1000' \
+                > /tmp/dashboards.json
+              grep -q '"uid":"subscribe-control"' /tmp/dashboards.json
+              grep -q '"uid":"strategies-logs"' /tmp/dashboards.json
+              grep -q '"uid":"systems-logs"' /tmp/dashboards.json
+
+              echo 'Verified the managed Viewer and all three provisioned dashboards.'
+          env:
+            - name: GRAFANA_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: philipp-grafana-admin
+                  key: admin-password
+            - name: GRAFANA_PHILIPP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-philipp
+                  key: password
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+              ephemeral-storage: 16Mi
+            limits:
+              cpu: 50m
+              memory: 64Mi
+              ephemeral-storage: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi

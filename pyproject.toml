@@ -10,9 +10,11 @@ readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "databento>=0.57,<1",
+    "fastapi>=0.116,<1",
     "nautilus_trader[visualization]>=1.228,<1.229",
     "python-dotenv>=1.2,<2",
     "typer>=0.20,<0.21",
+    "uvicorn>=0.35,<1",
 ]
 
 [tool.setuptools]
@@ -22,6 +24,7 @@ packages = [
     "cli.backtest",
     "cli.live",
     "phillip",
+    "phillip.control",
     "phillip.adapters",
     "phillip.adapters.tradovate",
     "phillip.adapters.tradovate.http",

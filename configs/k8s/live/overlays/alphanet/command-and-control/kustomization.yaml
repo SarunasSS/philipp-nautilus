@@ -5,11 +5,13 @@ namespace: philipp-trading-dev
 
 resources:
   - ../../../base/command-and-control
+  - control-auth-external-secret.yaml
   - grafana-external-secret.yaml
+  - grafana-user-external-secret.yaml
   - ingress.yaml
 
 configMapGenerator:
-  - name: philipp-command-control-config
+  - name: command-control-config
     behavior: replace
     literals:
       - CLUSTER_NAME=alphanet
