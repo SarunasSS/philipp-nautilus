@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: philipp-loki-data
+  name: loki-data
   labels:
     app.kubernetes.io/name: loki
     app.kubernetes.io/part-of: command-and-control
@@ -108,7 +108,7 @@ spec:
             name: loki-config
         - name: data
           persistentVolumeClaim:
-            claimName: philipp-loki-data
+            claimName: loki-data
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi

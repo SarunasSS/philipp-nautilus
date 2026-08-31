@@ -21,6 +21,7 @@ rules:
       - configmaps
     resourceNames:
       - subscribe-config
+      - htf-sweep-cisd-config
     verbs:
       - get
       - update
@@ -30,6 +31,7 @@ rules:
       - deployments
     resourceNames:
       - subscribe
+      - htf-sweep-cisd
     verbs:
       - get
       - patch

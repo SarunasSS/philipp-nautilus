@@ -20,7 +20,12 @@ class SubscribeStrategy(Strategy):
         self._subscribed = False
 
     def on_start(self) -> None:
-        self.request_instrument(self._bar_type.instrument_id)
+        instrument = self.cache.instrument(self._bar_type.instrument_id)
+        if instrument is None:
+            self.request_instrument(self._bar_type.instrument_id)
+            return
+
+        self.on_instrument(instrument)
 
     def on_instrument(self, instrument: Instrument) -> None:
         if instrument.id != self._bar_type.instrument_id or self._subscribed:

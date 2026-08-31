@@ -9,7 +9,7 @@
         "type": "yesoreyeram-infinity-datasource",
         "uid": "strategy-control"
       },
-      "description": "Loads the selected strategy's allow-listed fields, validates the update, writes its ConfigMap, and restarts only its mapped Deployment.",
+      "description": "Loads the selected strategy's allow-listed fields, validates the update, writes its ConfigMap, and requests a rollout of only its mapped Deployment. Stopped Deployments remain stopped.",
       "fieldConfig": {
         "defaults": {},
         "overrides": []
@@ -27,7 +27,7 @@
           "size": "md"
         },
         "confirmModal": {
-          "body": "Saving replaces the selected strategy's runtime configuration and restarts its Deployment.",
+          "body": "Saving replaces the selected strategy's runtime configuration and requests a Deployment rollout. A stopped Deployment remains stopped.",
           "cancel": "Cancel",
           "columns": {
             "include": [
@@ -39,9 +39,9 @@
             "newValue": "New value",
             "oldValue": "Current value"
           },
-          "confirm": "Update and restart",
+          "confirm": "Update configuration",
           "elementDisplayMode": "modified",
-          "title": "Confirm strategy restart"
+          "title": "Confirm strategy update"
         },
         "elementValueChanged": "const editable = context.panel.elements.filter((element) => element.id !== 'RESOURCE_VERSION');\nconst resourceVersion = context.panel.elements.find((element) => element.id === 'RESOURCE_VERSION')?.value;\nconst valid = editable.length > 0 && editable.every((element) => {\n  const value = element.value;\n  return value !== undefined && value !== null && String(value).length > 0;\n});\n\nif (valid && resourceVersion) {\n  context.panel.enableSubmit();\n} else {\n  context.panel.disableSubmit();\n}",
         "elements": [],
@@ -114,12 +114,12 @@
           "backgroundColor": "",
           "foregroundColor": "",
           "icon": "sync",
-          "text": "Update and restart",
+          "text": "Update configuration",
           "variant": "primary"
         },
         "sync": true,
         "update": {
-          "code": "if (context.panel.response && context.panel.response.state === 'Done') {\n  context.grafana.notifySuccess(['Strategy control', 'Configuration updated and the selected strategy restarted.']);\n  context.panel.initialRequest();\n  context.grafana.refresh();\n  return;\n}\n\ncontext.grafana.notifyError(['Strategy control', 'The update failed. Reload current values before retrying.']);",
+          "code": "if (context.panel.response && context.panel.response.state === 'Done') {\n  context.grafana.notifySuccess(['Strategy control', 'Configuration updated and a rollout was requested. Stopped strategies remain stopped.']);\n  context.panel.initialRequest();\n  context.grafana.refresh();\n  return;\n}\n\ncontext.grafana.notifyError(['Strategy control', 'The update failed. Reload current values before retrying.']);",
           "confirm": true,
           "contentType": "application/json",
           "datasource": "strategy-control",
@@ -423,7 +423,7 @@
           }
         }
       ],
-      "title": "Last control restart",
+      "title": "Last control update",
       "type": "stat"
     },
     {
@@ -761,7 +761,7 @@
           "showLineNumbers": false,
           "showMiniMap": false
         },
-        "content": "### Operational behavior\n\nThe strategy selector comes from the controller's allow-list; dashboard input never supplies Kubernetes resource names. Saving updates the selected ConfigMap and restarts only its mapped Deployment. Runtime changes are restored to Git values on the next strategy Kustomize apply, so copy intentional long-lived changes into the strategy overlay.",
+        "content": "### Operational behavior\n\nThe strategy selector comes from the controller's allow-list; dashboard input never supplies Kubernetes resource names. Saving updates the selected ConfigMap and requests a rollout only for its mapped Deployment; a stopped Deployment remains stopped. Runtime changes are restored to Git values on the next strategy Kustomize apply, so copy intentional long-lived changes into the strategy overlay.",
         "mode": "markdown"
       },
       "title": "Control boundary",
