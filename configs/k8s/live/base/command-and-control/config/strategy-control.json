@@ -46,7 +46,7 @@
         "elementValueChanged": "const editable = context.panel.elements.filter((element) => element.id !== 'RESOURCE_VERSION');\nconst resourceVersion = context.panel.elements.find((element) => element.id === 'RESOURCE_VERSION')?.value;\nconst valid = editable.length > 0 && editable.every((element) => {\n  const value = element.value;\n  return value !== undefined && value !== null && String(value).length > 0;\n});\n\nif (valid && resourceVersion) {\n  context.panel.enableSubmit();\n} else {\n  context.panel.disableSubmit();\n}",
         "elements": [],
         "initial": {
-          "code": "const frame = context.panel.data?.series?.find((series) =>\n  series.fields?.some((field) => field.name === 'form_json')\n);\nconst field = frame?.fields?.find((candidate) => candidate.name === 'form_json');\nconst serialized = field?.values?.get?.(0) ?? field?.values?.[0];\n\nif (!serialized) {\n  context.panel.setError('The strategy form model was not returned. Refresh the dashboard and check the Strategy Control datasource.');\n  context.panel.disableSubmit();\n  return;\n}\n\nlet model;\ntry {\n  model = JSON.parse(serialized);\n} catch (error) {\n  context.panel.setError(`The strategy form model is invalid: ${error.message}`);\n  context.panel.disableSubmit();\n  return;\n}\n\nconst elements = model.fields.map((field, index) => {\n  const base = {\n    uid: `${model.strategy_id}-${field.key}-${index}`,\n    id: field.key,\n    title: field.label,\n    type: field.type,\n    labelWidth: 12,\n    width: 42,\n    tooltip: field.tooltip || '',\n    section: 'runtime',\n    unit: '',\n    value: model.values[field.key] ?? '',\n    background: '',\n    labelBackground: '',\n    labelColor: '',\n    helpers: {\n      showIf: () => true,\n      disableIf: () => false,\n      getOptions: () => (field.options || []).map((value) => ({ value, label: value })),\n    },\n  };\n\n  if (field.type === 'select') {\n    return { ...base, optionsSource: 'Custom', allowCustomValue: false };\n  }\n  return base;\n});\n\nelements.push({\n  uid: `${model.strategy_id}-resource-version`,\n  id: 'RESOURCE_VERSION',\n  title: 'Config version',\n  type: 'disabled',\n  labelWidth: 12,\n  width: 42,\n  tooltip: 'Kubernetes resourceVersion used to reject stale edits.',\n  section: 'safety',\n  unit: '',\n  value: model.resource_version,\n  background: '',\n  labelBackground: '',\n  labelColor: '',\n  helpers: { showIf: () => true, disableIf: () => true, getOptions: () => [] },\n});\n\nconst values = { ...model.values, RESOURCE_VERSION: model.resource_version };\ncontext.panel.onChangeElements(elements);\ncontext.panel.setInitial(values);\ncontext.panel.setFormValue(values);\ncontext.panel.enableSubmit();",
+          "code": "const frame = context.panel.data?.series?.find((series) =>\n  series.fields?.some((field) => field.name === 'form_json')\n);\nconst field = frame?.fields?.find((candidate) => candidate.name === 'form_json');\nconst serialized = field?.values?.get?.(0) ?? field?.values?.[0];\n\nif (!serialized) {\n  context.panel.setError('The strategy form model was not returned. Refresh the dashboard and check the Strategy Control datasource.');\n  context.panel.disableSubmit();\n  return;\n}\n\nlet model;\ntry {\n  model = JSON.parse(serialized);\n} catch (error) {\n  context.panel.setError('The strategy form model is invalid: ' + error.message);\n  context.panel.disableSubmit();\n  return;\n}\n\nconst isHtfSweep = model.strategy_id === 'htf-sweep-cisd';\nconst htfFieldOrder = [\n  'TRADER_ID',\n  'LOG_LEVEL',\n  'HTF_BAR_TYPE',\n  'LTF_BAR_TYPE',\n  'EXECUTION_INSTRUMENT_ID',\n  'TRADE_QUANTITY',\n  'ENTRY_ORDER_TYPE',\n  'ENTRY_ORDER_EXPIRE_MINUTES',\n  'ENTRY_LIMIT_OFFSET',\n  'STOP_LOSS_DISTANCE_RATIO',\n  'STOP_ORDER_TYPE',\n  'STOP_LIMIT_OFFSET',\n];\nconst htfFieldRank = new Map(htfFieldOrder.map((key, index) => [key, index]));\nconst htfLeftFields = new Set([\n  'TRADER_ID',\n  'HTF_BAR_TYPE',\n  'EXECUTION_INSTRUMENT_ID',\n  'ENTRY_ORDER_TYPE',\n  'ENTRY_LIMIT_OFFSET',\n  'STOP_ORDER_TYPE',\n]);\nconst fields = isHtfSweep\n  ? [...model.fields].sort(\n      (left, right) =>\n        (htfFieldRank.get(left.key) ?? Number.MAX_SAFE_INTEGER) -\n        (htfFieldRank.get(right.key) ?? Number.MAX_SAFE_INTEGER)\n    )\n  : model.fields;\n\ncontext.panel.sectionsUtils.update(\n  isHtfSweep\n    ? [\n        { id: 'htf-left', name: 'Core & entry' },\n        { id: 'htf-right', name: 'Data & risk' },\n      ]\n    : [{ id: 'runtime', name: 'Runtime configuration' }]\n);\n\nconst elements = fields.map((field, index) => {\n  const base = {\n    uid: [model.strategy_id, field.key, index].join('-'),\n    id: field.key,\n    title: field.label,\n    type: field.type,\n    labelWidth: isHtfSweep ? 16 : 12,\n    width: isHtfSweep ? 28 : 42,\n    tooltip: field.tooltip || '',\n    section: isHtfSweep\n      ? htfLeftFields.has(field.key)\n        ? 'htf-left'\n        : 'htf-right'\n      : 'runtime',\n    unit: '',\n    value: model.values[field.key] ?? '',\n    background: '',\n    labelBackground: '',\n    labelColor: '',\n    helpers: {\n      showIf: () => true,\n      disableIf: () => false,\n      getOptions: () => (field.options || []).map((value) => ({ value, label: value })),\n    },\n  };\n\n  if (field.type === 'select') {\n    return { ...base, optionsSource: 'Custom', allowCustomValue: false };\n  }\n  return base;\n});\n\nelements.push({\n  uid: model.strategy_id + '-resource-version',\n  id: 'RESOURCE_VERSION',\n  title: 'Config version',\n  type: 'disabled',\n  labelWidth: isHtfSweep ? 16 : 12,\n  width: isHtfSweep ? 28 : 42,\n  tooltip: 'Kubernetes resourceVersion used to reject stale edits.',\n  section: isHtfSweep ? 'htf-right' : 'runtime',\n  unit: '',\n  value: model.resource_version,\n  background: '',\n  labelBackground: '',\n  labelColor: '',\n  helpers: { showIf: () => true, disableIf: () => true, getOptions: () => [] },\n});\n\nconst values = { ...model.values, RESOURCE_VERSION: model.resource_version };\ncontext.panel.onChangeElements(elements);\ncontext.panel.setInitial(values);\ncontext.panel.setFormValue(values);\ncontext.panel.enableSubmit();",
           "contentType": "application/json",
           "datasource": "strategy-control",
           "getPayload": "return {};",
@@ -83,13 +83,9 @@
             {
               "id": "runtime",
               "name": "Runtime configuration"
-            },
-            {
-              "id": "safety",
-              "name": "Conflict protection"
             }
           ],
-          "variant": "single"
+          "variant": "split"
         },
         "reset": {
           "backgroundColor": "transparent",
@@ -746,26 +742,6 @@
       "description": "Strategy logs within the dashboard time range. Check timestamps to distinguish live output from an idle strategy.",
       "title": "Recent ${strategy:text} logs",
       "type": "logs"
-    },
-    {
-      "gridPos": {
-        "h": 5,
-        "w": 24,
-        "x": 0,
-        "y": 31
-      },
-      "id": 11,
-      "options": {
-        "code": {
-          "language": "plaintext",
-          "showLineNumbers": false,
-          "showMiniMap": false
-        },
-        "content": "### Operational behavior\n\nThe strategy selector comes from the controller's allow-list; dashboard input never supplies Kubernetes resource names. Saving updates the selected ConfigMap and requests a rollout only for its mapped Deployment; a stopped Deployment remains stopped. Runtime changes are restored to Git values on the next strategy Kustomize apply, so copy intentional long-lived changes into the strategy overlay.",
-        "mode": "markdown"
-      },
-      "title": "Control boundary",
-      "type": "text"
     }
   ],
   "refresh": "1m",

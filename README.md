@@ -14,6 +14,7 @@ cli/
 └── live/                # Run live strategies through configured data providers
     ├── __init__.py      # Shared live callback and runner
     ├── execute.py       # Case-selected execution adapter tests
+    ├── htf_sweep_cisd.py # HTF sweep signals with an explicit execution instrument
     └── subscribe.py     # Generic bar subscription command
 src/phillip/adapters/tradovate/
 ├── data.py              # Bars-only Nautilus live data client
@@ -143,13 +144,39 @@ uv run python main.py live \
 
 There is no provider selector. Nautilus routes `TRADOVATE` instruments to the venue-bound custom adapter and uses Databento as the default client for exchange venues such as `GLBX`. The live Databento client retains the dataset venue (`GLBX`) so its instrument IDs match the catalog and CLI examples. Replace `MNQU6` when that futures contract is no longer current.
 
-At live-node startup, the CLI derives the selected instrument ID from `--bar-type` and preloads it into both the Databento client and instrument provider. This makes price precision available before the strategy subscribes. A later `request_instrument()` still returns the definition to the strategy, but it is not relied upon to populate the provider cache in NautilusTrader 1.228.0.
+At live-node startup, the CLI derives the selected instrument ID from `--bar-type` and preloads its latest exact-match definition from Databento's recent historical range. This makes price precision available before the strategy subscribes and also works while the current session is empty, such as on weekends. The subscribe strategy uses the preloaded cache directly and falls back to `request_instrument()` only when no cached definition exists.
 
 The Databento API key must have a live `GLBX.MDP3` license. Historical access alone is
 not sufficient: Nautilus can resolve the delayed historical instrument definition and
 log `Subscribed bars`, while the live gateway still sends no records. Databento's
 official client reports this state explicitly as
 `A live data license is required to access GLBX.MDP3`.
+
+Run HTF sweep + CISD with Databento bars and a separate Tradovate execution
+instrument:
+
+```bash
+uv run python main.py live \
+  --environment demo \
+  htf-sweep-cisd run \
+  --htf-bar-type MNQZ6.GLBX-15-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL \
+  --ltf-bar-type MNQZ6.GLBX-1-MINUTE-LAST-EXTERNAL \
+  --execution-instrument-id MNQZ6.TRADOVATE \
+  --entry-order-type MARKET \
+  --trade-quantity 1
+```
+
+The bar and execution instruments must use the same symbol. The command fails
+before starting the node when Tradovate credentials are absent, so a Databento
+subscription cannot accidentally be mistaken for an executable strategy.
+The live command uses an explicit whole-contract quantity so the requested
+minimum remains one MNQ contract as the futures price changes.
+Live limit entries use a 15-minute GTD expiry by default; change it with
+`--entry-order-expire-minutes`. Because Tradovate positions are netted, the
+live strategy skips new entries while one managed trade is active. Use an
+account where no other process trades the same instrument. After execution
+reconciliation, startup refuses any pre-existing open order or position for
+the execution instrument rather than adopting or flattening unknown exposure.
 
 ## Alphanet deployment
 
@@ -176,7 +203,7 @@ details, and the selected strategy's live logs. Its resource-name-scoped API
 and separate bearer token remain internal to the namespace.
 
 The Alphanet subscriber uses
-`MNQU6.GLBX-5-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL`: Databento supplies
+`MNQZ6.GLBX-5-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL`: Databento supplies
 one-minute external bars and Nautilus aggregates them into five-minute bars.
 The GAR image is
 `europe-west1-docker.pkg.dev/oned-works/oned/philipp-trading-dev`.

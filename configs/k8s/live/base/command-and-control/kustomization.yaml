@@ -10,9 +10,9 @@ resources:
 configMapGenerator:
   - name: command-control-config
     literals:
-      - CLUSTER_NAME=review-required
-      - ENVIRONMENT=review-required
-      - GRAFANA_ROOT_URL=https://review-required
+      - CLUSTER_NAME=alphanet
+      - ENVIRONMENT=dev
+      - GRAFANA_ROOT_URL=https://dashboard.dev.philipp-trading.apps.1d.works
   - name: alloy-config
     files:
       - config.alloy=config/alloy.config
@@ -33,8 +33,8 @@ configMapGenerator:
 
 images:
   - name: grafana/alloy
-    newTag: review-required
+    newTag: v1.18.0
   - name: grafana/grafana
-    newTag: review-required
+    newTag: 13.2.0
   - name: grafana/loki
-    newTag: review-required
+    newTag: 3.7.6

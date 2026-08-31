@@ -4,8 +4,11 @@ kind: Kustomization
 resources:
   - deployment.yaml
   - external-secret.yaml
+  - htf-sweep-cisd-config.yaml
+  - htf-sweep-cisd-deployment.yaml
   - strategy-control.yaml
   - subscribe-config.yaml
+  - tradovate-external-secret.yaml
 
 configMapGenerator:
   - name: strategy-registry

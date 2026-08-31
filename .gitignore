@@ -15,6 +15,7 @@ data/
 docs/
 logs/
 onboarding/
+scripts/agents/
 tests/
 
 configs/k8s/live/overlays/alphanet/namespace.yaml
