@@ -4,7 +4,7 @@ import typer
 from typing import Annotated
 
 
-from nautilus_trader.model.enums import OmsType
+from nautilus_trader.model.data import BarType
 
 from cli.backtest import _get_backtest_settings
 from cli.backtest import _run_backtest
@@ -25,7 +25,7 @@ def _run_htf_sweep_cisd(
     ],
     ltf_bar_type: Annotated[
         str,
-        typer.Option("--ltf-bar-type", help="LTF catalog bar type to load and subscribe to"),
+        typer.Option("--ltf-bar-type", help="LTF bar type to subscribe to; a composite is loaded from its catalog source"),
     ],
     entry_order_type: Annotated[
         OrderMode,
@@ -39,10 +39,14 @@ def _run_htf_sweep_cisd(
         int | None,
         typer.Option("--entry-order-expire-minutes", help="Optional GTD expiry for entry limit orders"),
     ] = None,
-    trade_notional: Annotated[
+    risk_per_trade: Annotated[
         float,
-        typer.Option("--trade-notional", help="Fixed notional value used to size each entry"),
+        typer.Option("--risk-per-trade", help="Cash risked per trade, sized across the entry-to-stop distance"),
     ] = 1_000.0,
+    max_contracts: Annotated[
+        int | None,
+        typer.Option("--max-contracts", help="Ceiling on contracts per trade; unset means risk sizing alone decides"),
+    ] = None,
     stop_order_type: Annotated[
         OrderMode,
         typer.Option("--stop-order-type", help="Stop order type"),
@@ -67,19 +71,26 @@ def _run_htf_sweep_cisd(
         ),
     ] = None,
 ) -> None:
+    try:
+        parsed_ltf_bar_type = BarType.from_str(ltf_bar_type)
+    except ValueError as exc:
+        raise typer.BadParameter(f"Invalid bar type: {ltf_bar_type}", param_hint="--ltf-bar-type") from exc
+
     _run_backtest(
         settings=_get_backtest_settings(ctx),
-        requested_bar_type=ltf_bar_type,
+        requested_bar_type=str(parsed_ltf_bar_type.composite())
+        if parsed_ltf_bar_type.is_composite()
+        else ltf_bar_type,
         strategy_name="htf-sweep-cisd",
-        oms_type=OmsType.HEDGING,
-        create_strategy=lambda selected_bar_type: HTFSweepCISDStrategy(
+        create_strategy=lambda _selected_bar_type: HTFSweepCISDStrategy(
             config=HTFSweepCISDStrategyConfig(
                 htf_bar_type=htf_bar_type,
-                ltf_bar_type=str(selected_bar_type),
+                ltf_bar_type=ltf_bar_type,
                 entry_order_type=entry_order_type.value,
                 entry_limit_offset=entry_limit_offset,
                 entry_order_expire_minutes=entry_order_expire_minutes,
-                trade_notional=trade_notional,
+                risk_per_trade=risk_per_trade,
+                max_contracts=max_contracts,
                 stop_order_type=stop_order_type.value,
                 stop_loss_distance_ratio=stop_loss_distance_ratio,
                 stop_limit_offset=stop_limit_offset,

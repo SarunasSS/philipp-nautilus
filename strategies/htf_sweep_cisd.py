@@ -13,6 +13,8 @@ from nautilus_trader.model.data import BarType
 from nautilus_trader.model.enums import OrderSide
 from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.model.instruments import Instrument
+from nautilus_trader.model.objects import Price
+from nautilus_trader.model.objects import Quantity
 from nautilus_trader.model.orders import Order
 from nautilus_trader.model.position import Position
 
@@ -38,7 +40,8 @@ class HTFSweepCISDStrategyConfig(BaseStrategyConfig, frozen=True):
     entry_order_type: str = OrderMode.LIMIT.value
     entry_limit_offset: float = 0.0
     entry_order_expire_minutes: int | None = None
-    trade_notional: float = 1_000.0
+    risk_per_trade: float = 1_000.0
+    max_contracts: int | None = None
     stop_order_type: str = OrderMode.MARKET.value
     stop_loss_distance_ratio: float = 1.0
     take_profit_multiplier: float = 2.0
@@ -58,6 +61,47 @@ class SignalSideState:
     blocked: bool = False
 
 
+def _stop_price(
+    instrument: Instrument,
+    direction: TradeDirection,
+    cisd_level: float,
+    swing_price: float,
+    distance_ratio: float,
+) -> Price:
+    # A distance ratio of 1.0 places the stop on the swept swing; lower values interpolate from the
+    # CISD level toward it. The entry price plays no part, so the stop is known at signal time.
+    if direction == TradeDirection.LONG:
+        return instrument.make_price(cisd_level - _structural_stop_distance(cisd_level, swing_price, distance_ratio))
+
+    return instrument.make_price(cisd_level + _structural_stop_distance(cisd_level, swing_price, distance_ratio))
+
+
+def _structural_stop_distance(cisd_level: float, swing_price: float, distance_ratio: float) -> float:
+    return abs(cisd_level - swing_price) * distance_ratio
+
+
+def _position_quantity(
+    instrument: Instrument,
+    entry_level: float,
+    stop_level: float,
+    risk_per_trade: float,
+    max_contracts: int | None,
+) -> Quantity:
+    # Both levels sit on the tick grid, so the tick count is exact, and a futures tick is worth the
+    # price increment times the contract multiplier. make_qty raises when the distance is too wide
+    # to afford a single contract.
+    tick_size = instrument.price_increment.as_double()
+    risk_ticks = round(abs(entry_level - stop_level) / tick_size)
+    if risk_ticks == 0:
+        raise ValueError("stop distance must be at least one tick")
+
+    contracts = risk_per_trade / (risk_ticks * tick_size * float(instrument.multiplier))
+    if max_contracts is not None:
+        contracts = min(contracts, float(max_contracts))
+
+    return instrument.make_qty(contracts, round_down=True)
+
+
 @dataclass
 class Entry(Stratlet):
     config: HTFSweepCISDStrategyConfig
@@ -72,15 +116,37 @@ class Entry(Stratlet):
     stopped: bool = field(default=False, init=False)
 
     async def on_start(self) -> None:
-        raw_quantity = self.config.trade_notional / (self.last_close * float(self.instrument.multiplier))
+        # The stop follows from the CISD level and the swept swing alone, so the trade can be sized
+        # off its risk distance before the entry order is submitted. A market entry has no price
+        # until it fills, so it is sized against the signal bar's close.
+        entry_order_type = OrderMode(self.config.entry_order_type.upper())
+        if entry_order_type == OrderMode.MARKET:
+            entry_reference = self.instrument.make_price(self.last_close)
+        elif self.direction == TradeDirection.LONG:
+            entry_reference = self.instrument.make_price(self.last_close * (1 - self.config.entry_limit_offset))
+        else:
+            entry_reference = self.instrument.make_price(self.last_close * (1 + self.config.entry_limit_offset))
+
+        stop_price = _stop_price(
+            instrument=self.instrument,
+            direction=self.direction,
+            cisd_level=self.cisd_level,
+            swing_price=self.swing_price,
+            distance_ratio=self.config.stop_loss_distance_ratio,
+        )
         try:
-            quantity = self.instrument.make_qty(raw_quantity, round_down=True)
+            quantity = _position_quantity(
+                instrument=self.instrument,
+                entry_level=entry_reference.as_double(),
+                stop_level=stop_price.as_double(),
+                risk_per_trade=self.config.risk_per_trade,
+                max_contracts=self.config.max_contracts,
+            )
         except ValueError as exc:
-            self.strategy.log.warning(f"Skipping entry; trade_notional is too small for instrument quantity: {exc}")
+            self.strategy.log.warning(f"Skipping entry; risk_per_trade is too small for one contract: {exc}")
             return
 
         order_side = OrderSide.BUY if self.direction == TradeDirection.LONG else OrderSide.SELL
-        entry_order_type = OrderMode(self.config.entry_order_type.upper())
         if entry_order_type == OrderMode.MARKET:
             entry_order = self.strategy.order_factory.market(
                 instrument_id=self.instrument.id,
@@ -89,15 +155,6 @@ class Entry(Stratlet):
                 tags=["HTF_CISD", "ENTRY"],
             )
         else:
-            if self.direction == TradeDirection.LONG:
-                entry_limit_price = self.instrument.make_price(
-                    self.last_close * (1 - self.config.entry_limit_offset),
-                )
-            else:
-                entry_limit_price = self.instrument.make_price(
-                    self.last_close * (1 + self.config.entry_limit_offset),
-                )
-
             if self.config.entry_order_expire_minutes is None:
                 time_in_force = TimeInForce.GTC
                 expire_time = None
@@ -112,7 +169,7 @@ class Entry(Stratlet):
                 instrument_id=self.instrument.id,
                 order_side=order_side,
                 quantity=quantity,
-                price=entry_limit_price,
+                price=entry_reference,
                 time_in_force=time_in_force,
                 expire_time=expire_time,
                 tags=["HTF_CISD", "ENTRY"],
@@ -142,13 +199,9 @@ class Entry(Stratlet):
         entry_price = closed_entry_order.avg_px
 
         if self.direction == TradeDirection.LONG:
-            raw_stop_price = self.cisd_level - (
-                (self.cisd_level - self.swing_price) * self.config.stop_loss_distance_ratio
-            )
-            if raw_stop_price >= entry_price:
+            if stop_price.as_double() >= entry_price:
                 raise ValueError("long stop price must be below entry price")
 
-            stop_price = self.instrument.make_price(raw_stop_price)
             stop_distance = entry_price - stop_price.as_double()
             if stop_distance <= 0:
                 raise ValueError("long stop distance must be positive")
@@ -159,13 +212,9 @@ class Entry(Stratlet):
             )
             exit_side = OrderSide.SELL
         else:
-            raw_stop_price = self.cisd_level + (
-                (self.swing_price - self.cisd_level) * self.config.stop_loss_distance_ratio
-            )
-            if raw_stop_price <= entry_price:
+            if stop_price.as_double() <= entry_price:
                 raise ValueError("short stop price must be above entry price")
 
-            stop_price = self.instrument.make_price(raw_stop_price)
             stop_distance = stop_price.as_double() - entry_price
             if stop_distance <= 0:
                 raise ValueError("short stop distance must be positive")
@@ -316,6 +365,7 @@ class HTFSweepCISDStrategy(BaseStrategy):
         self._short = SignalSideState()
         self._long = SignalSideState()
 
+        self._entry: Entry | None = None
         self._signal_cooldown_until_ns = 0
 
     def on_start(self) -> None:
@@ -366,8 +416,10 @@ class HTFSweepCISDStrategy(BaseStrategy):
             raise ValueError("entry_limit_offset must be between 0 and 1")
         if self.config.entry_order_expire_minutes is not None and self.config.entry_order_expire_minutes <= 0:
             raise ValueError("entry_order_expire_minutes must be positive when set")
-        if self.config.trade_notional <= 0:
-            raise ValueError("trade_notional must be positive")
+        if self.config.risk_per_trade <= 0:
+            raise ValueError("risk_per_trade must be positive")
+        if self.config.max_contracts is not None and self.config.max_contracts <= 0:
+            raise ValueError("max_contracts must be positive")
         if not 0 < self.config.stop_loss_distance_ratio <= 1:
             raise ValueError("stop_loss_distance_ratio must be between 0 and 1")
         if not 0 <= self.config.stop_limit_offset <= 1:
@@ -382,8 +434,16 @@ class HTFSweepCISDStrategy(BaseStrategy):
             raise ValueError("htf_bar_type must be passed as a composite bar type")
         if not self._htf_bar_type.is_internally_aggregated():
             raise ValueError("htf_bar_type must be internally aggregated")
-        if not self._ltf_bar_type.is_externally_aggregated():
-            raise ValueError("ltf_bar_type must be externally aggregated")
+
+        # The LTF may either be the catalog bar type itself, or a composite aggregated from it.
+        if self._ltf_bar_type.is_composite():
+            if not self._ltf_bar_type.is_internally_aggregated():
+                raise ValueError("composite ltf_bar_type must be internally aggregated")
+            if not self._ltf_bar_type.composite().is_externally_aggregated():
+                raise ValueError("ltf_bar_type composite source must be externally aggregated")
+        elif not self._ltf_bar_type.is_externally_aggregated():
+            raise ValueError("non-composite ltf_bar_type must be externally aggregated")
+
         if not self._htf_bar_type.spec.is_time_aggregated() or not self._ltf_bar_type.spec.is_time_aggregated():
             raise ValueError("htf_bar_type and ltf_bar_type must be time-aggregated bars")
 
@@ -393,10 +453,15 @@ class HTFSweepCISDStrategy(BaseStrategy):
             raise ValueError("htf_bar_type interval must be greater than ltf_bar_type interval")
         if htf_interval_ns % ltf_interval_ns != 0:
             raise ValueError("htf_bar_type interval must be an exact multiple of ltf_bar_type interval")
-        if self._htf_bar_type.composite().standard() != self._ltf_bar_type.standard():
-            raise ValueError("htf_bar_type composite source must match ltf_bar_type")
+        # composite() returns the source for a composite and the bar type itself otherwise, so this
+        # compares catalog sources without either side declaring one.
+        if self._htf_bar_type.composite().standard() != self._ltf_bar_type.composite().standard():
+            raise ValueError("htf_bar_type and ltf_bar_type must aggregate from the same source bar type")
 
     def _evaluate_signal(self, last_ltf_bar: Bar) -> None:
+        # One trade at a time: a netted position cannot carry per-trade exits for several entries.
+        if self._entry is not None and not self._entry.completed:
+            return
         if len(self._ltf_bars) < 3:
             return
 
@@ -521,4 +586,5 @@ class HTFSweepCISDStrategy(BaseStrategy):
             cisd_level=signal_candidate.cisd_level,
             last_close=last_ltf_bar.close.as_double(),
         )
+        self._entry = entry
         self._add_stratlet(entry)
