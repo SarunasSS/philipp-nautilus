@@ -12,7 +12,8 @@ cli/
 │   ├── htf_sweep_cisd.py
 │   ├── overnight_bias_orb.py
 │   ├── subscribe.py
-│   └── vault_break.py
+│   ├── vault_break.py
+│   └── vwap_pullback_adx.py
 ├── catalog.py           # Download Databento bars into the catalog
 └── live/                # Run live strategies through configured data providers
     ├── __init__.py      # Shared live callback and runner
@@ -38,9 +39,11 @@ strategies/
 ├── drift_pullback.py    # Session-VWAP drift continuation bought on the first 5-minute pullback
 ├── execute.py           # ExecuteStrategy subscription plus execution tests
 ├── htf_sweep_cisd.py    # HTF sweep + CISD managed trade strategy
+├── indicators.py        # Wilder ADX shared by the strategies that gate on it
 ├── overnight_bias_orb.py # Opening range breakout taken only with the overnight gap bias
 ├── subscribe.py         # SubscribeStrategy requests and logs bars
-└── vault_break.py       # Session noise-boundary breakout bought above the session VWAP
+├── vault_break.py       # Session noise-boundary breakout bought above the session VWAP
+└── vwap_pullback_adx.py # Opening-range break, VWAP retest, reclaim bought behind a Wilder ADX gate
 ```
 
 ## Setup
@@ -286,6 +289,55 @@ margin of 114. Over the full five months, though, it takes 125 trades and **lose
 contract: the 75 targets and 40 stops cancel to exactly zero and every dollar of the loss is the ten
 flattens at `--flatten-time`. `--vwap-exit-bars` never fires at all. See [backtest.md](backtest.md)
 for the full comparison and the numbers behind each claim.
+
+Run VWAP Pullback + ADX Gate, a long-only opening-range retest on a single 1-minute stream. After
+the first half hour of the New York session has been broken to the upside by a close, the strategy
+waits for price to come back and touch the session VWAP and buys the first close back above it
+when the 14-bar Wilder ADX is at or above 20 and not rising. The stop is the last confirmed 20-bar
+swing low, the target the last confirmed 5-bar swing high, one trade a day, flat at 16:55 ET.
+
+```bash
+uv run python main.py backtest \
+  --start 2026-01-01 \
+  --end 2026-05-30 \
+  --chart-bar-type NQ.c.0.GLBX-1-MINUTE-LAST-EXTERNAL \
+  vwap-pullback-adx run \
+  --bar-type NQ.c.0.GLBX-1-MINUTE-LAST-EXTERNAL \
+  --contracts 1
+```
+
+The structure comes from time windows rather than timeframes, and all three use one convention: a
+bar belongs to a window if its closing stamp is after the start and at or before the end.
+`--opening-range-window` builds the range, `--vwap-window` anchors the session VWAP and silences the
+entry logic outside itself, `--entry-window` says when the trigger may fire. A close above the range
+is a one-way switch that stays set until an entry or the daily roll; a day that closes back inside
+the range keeps its bias. The VWAP touch is a latch too, and the signal is a state rebuilt every
+bar, so a reclaim that meets a closed ADX gate is delayed rather than lost: if it still holds when
+the ADX complies, it fires then. `--retest-mode CLOSE_THROUGH` latches on a close through the VWAP
+instead of a wick, and `--trade-shorts` enables the mirror image; both are the source's research
+options and off in its validated profile.
+
+**Session times are Eastern, and the daily roll is midnight Eastern.** The source is written for a
+Central-time chart with a state reset at 23:00 CT, which is the same instant. Its own tutorial gives
+the Eastern column used as defaults here; the Central values trade an hour off without erroring.
+
+**Both bracket levels are market structure, not point distances.** A pivot of strength N is a bar
+whose extreme is strictly beyond the N bars on each side, confirmed N bars after it forms; ties
+disqualify. The stop sits at the last confirmed `--stop-swing-length` pivot low, wherever on the
+24-hour chart it was, so it can be a tick away or several hundred points away, and the target at the
+last `--target-swing-length` pivot high. No entry unless both exist, the stop is below the close and
+the target above it. `--stop-mode PULLBACK_EXTREME` swaps the pivot for the lowest low since the
+latch was set, `--stop-buffer-points` pushes the stop further out, and `--min-rr` /
+`--max-stop-points` refuse poor ratios and wide stops; all four are off in the profile. Sizing is a
+flat `--contracts`: the source's risk-sized mode lost on every risk-adjusted metric in its own
+testing and is not ported.
+
+`--bar-type` may be the plain 1-minute catalog type, which is what the Tradovate live client
+delivers and matches the bracket against 1-minute bars, or a composite such as
+`NQ.c.0.GLBX-1-MINUTE-LAST-INTERNAL@1-SECOND-EXTERNAL` on `data/NQ/catalog`, where the 1-second
+source becomes the bar magnifier and the stop and target are checked every second. Either way the
+market entry fills at the signal bar's close. See [backtest.md](backtest.md) for the yearly
+comparison against the source's published results.
 
 Each backtest exports Nautilus order, order-fill, fill, position, and account reports as strategy-prefixed CSV files under `data/results/`. It also creates two interactive, self-contained HTML files:
 

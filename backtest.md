@@ -5,10 +5,11 @@ the `\` used in README.md.
 source named after the `@` in `--ltf-bar-type` / `--bar-type`. Do not reintroduce it.
 
 Only `htf_sweep_cisd` sizes by risk: `--risk-per-trade` across the entry-to-stop distance, capped by
-`--max-contracts`. The other three take a flat `--contracts`, for opposite reasons — DriftPullback's
+`--max-contracts`. The other four take a flat `--contracts`, for different reasons — DriftPullback's
 and VaultBreak's stops are fixed point distances, so risk sizing would resolve to a constant anyway,
-while OvernightBiasORB's stop is a fraction of a rolling daily true range, so the dollar risk already
-tracks volatility at a fixed size. The tick value is derived from the catalog instrument, which is
+OvernightBiasORB's stop is a fraction of a rolling daily true range, so the dollar risk already
+tracks volatility at a fixed size, and VWAP Pullback's pivot stop does vary but its source A/B-tested
+risk sizing against the fixed lot and shipped the fixed lot. The tick value is derived from the catalog instrument, which is
 why the continuous-contract multiplier had to be repaired — `ES.c.0.GLBX` and `NQ.c.0.GLBX` used to
 carry a placeholder `1` cloned from the first definition record in the DBN file, and now hold the
 real `50` and `20`. A wrong multiplier there silently mis-sizes every trade.
@@ -16,8 +17,8 @@ real `50` and `20`. A wrong multiplier there silently mis-sizes every trade.
 `htf_sweep_cisd` runs one trade at a time under netting; it previously used hedging and took roughly
 a quarter more entries, so results before and after that change are not comparable.
 
-This branch carries five strategies — `htf-sweep-cisd`, `drift-pullback`, `overnight-bias-orb`,
-`vault-break` and `subscribe` — and only those are documented here. The `notes/` evidence files and
+This branch carries six strategies — `htf-sweep-cisd`, `drift-pullback`, `overnight-bias-orb`,
+`vault-break`, `vwap-pullback-adx` and `subscribe` — and only those are documented here. The `notes/` evidence files and
 `scripts/drift_pullback_verify.py` referenced below live on `Philipp_Strategy01`, not here.
 
 ## HTF sweep + CISD
@@ -468,6 +469,164 @@ is likewise unreachable here and is a comment rather than code, for the reason g
 
 There is no slippage flag, because the source has no slippage input; the top-level
 `--commission-per-contract` is the knob to reach for.
+
+## VWAP Pullback + ADX Gate
+
+The only strategy here whose bracket is market structure rather than a point distance or a
+volatility multiple: the stop is the last confirmed 20-bar pivot low and the target the last
+confirmed 5-bar pivot high, both frozen on the signal bar. It reads a single 1-minute stream over
+the whole 24-hour session, and `--bar-type` may be either the plain catalog type or a composite
+aggregated from a finer source that then acts as the bar magnifier.
+
+Catalog coverage for the 1-minute NQ set at `data/catalog` is 2026-01-01 → 2026-05-29 17:00 ET.
+
+```bash
+uv run python main.py backtest `
+  --trader-id PHILIPP-001 `
+  --log-level INFO `
+  --start 2026-01-01 `
+  --end 2026-05-30 `
+  --catalog-path data/catalog `
+  --starting-balance "100000 USD" `
+  --visualize `
+  --chart-bar-type NQ.c.0.GLBX-1-MINUTE-LAST-EXTERNAL `
+  --chart-bar-limit 10000 `
+  vwap-pullback-adx run `
+  --bar-type NQ.c.0.GLBX-1-MINUTE-LAST-EXTERNAL `
+  --session-timezone America/New_York `
+  --opening-range-window 09:30-10:00 `
+  --vwap-window 09:30-18:00 `
+  --entry-window 10:00-18:00 `
+  --eod-flat `
+  --eod-flat-time 16:55 `
+  --retest-mode TOUCH `
+  --stop-mode PIVOT `
+  --stop-swing-length 20 `
+  --target-swing-length 5 `
+  --stop-buffer-points 0 `
+  --max-trades-per-day 1 `
+  --trade-longs `
+  --no-trade-shorts `
+  --min-rr 0 `
+  --max-stop-points 0 `
+  --use-adx-elevation `
+  --adx-elevation-threshold 20 `
+  --use-adx-decay `
+  --adx-decay-lookback 1 `
+  --adx-length 14 `
+  --contracts 1
+```
+
+On the plain 1-minute type the catalog bar type is the one the strategy trades on, so
+`--chart-bar-type` may be left to its default; on the composite form below it has to name the
+1-minute stream, for the reason given in every other section.
+
+**Session times are Eastern, and the daily roll is midnight Eastern.** The source ships Central
+inputs for an Exchange-time chart and resets its state at 23:00 CT, which is midnight New York; the
+tutorial's own table gives the equivalents, and the Eastern column is what is implemented:
+
+| input | meaning | Central (source) | Eastern (here) |
+|---|---|---|---|
+| ORStartTime / OREndTime | `--opening-range-window` | 0830 / 0900 | 09:30-10:00 |
+| VwapStartTime / VwapEndTime | `--vwap-window` | 0830 / 1700 | 09:30-18:00 |
+| EntryStartTime / EntryEndTime | `--entry-window` | 0900 / 1700 | 10:00-18:00 |
+| EODFlatTime | `--eod-flat-time` | 1555 | 16:55 |
+| DayResetTime | the calendar-day roll | 2300 | midnight |
+
+All three windows select a bar by its closing stamp, after the start and at or before the end,
+which is the one convention the source uses for all of them — the opposite of DriftPullback's entry
+window. `--session-timezone America/Chicago` with the Central column gives the literal reading;
+the roll then moves to midnight Central and the 23:00-to-midnight hour changes sessions.
+
+**One rule departs from the source.** With `--eod-flat` on, a signal on a bar closing at or after
+`--eod-flat-time` is refused. The source would enter it at the next bar's open and flatten it at the
+bar after that, a one-minute trade that can only cost the spread; the entry window still runs to
+18:00 because the source's does, but the flatten time is its effective end. Everything else is
+literal, including the parts that look odd on a chart: the ADX gate delays rather than cancels, so a
+reclaim that meets a closed gate fires later if it still holds; a day that closes back inside the
+range keeps its bias; the pivots and the ADX survive the roll, so the first stop of a session can
+be an overnight low; and a stop one tick below the close is a valid stop.
+
+**The market entry fills at the signal bar's close** rather than at the next bar's open, as in the
+OvernightBiasORB section. With the plain 1-minute type the venue matches the bracket against
+1-minute bars, so a stop and a target straddled by one bar resolve in whichever order the engine
+processes them; the 1-second magnifier below is what settles that by price path. Nautilus's
+`WilderMovingAverage` is an EMA with alpha 1/N seeded on its first input where MultiCharts seeds
+its ADX with a simple average over the first N bars; the two converge geometrically, so only the
+first hour of a run can gate a bar differently. Nothing trades until the 20-bar pivot has 41 bars
+of history, which is inside the first session of any run.
+
+Over the command above the port takes **47 trades and makes $17,140 gross on one contract**: 33
+targets for +$25,705, 8 stops for −$5,930 and 6 flattens at 16:55 for −$2,635, a 70 / 17 / 13
+percent split against the source's 64.5 / 29.1 / 6.4 over its whole 2021 → 2026 sample. Monthly:
+January +$5,150 (9 trades), February +$4,055 (7), March −$20 (10), April +$5,765 (11), May +$2,190
+(10). The median hold is nine minutes, the average winner $756 and the average loser $776, and the
+worst closed-trade drawdown $4,430. The median stop is 105.50 points from the fill against a median
+target of 33, so the median trade risks about three times what it stands to make and the edge is
+the hit rate, exactly as the tutorial says; the widest stop was 464.50 points on 2026-01-21, the
+pivot rule working as written on a day that trended from the open, and the tightest a single tick on
+2026-01-26. Three entries came after the 16:00 RTH close, inside the source's 18:00 entry window.
+
+There is no reference trade list for this strategy. Instead the run was replayed by an independent
+pandas script that re-derives the opening range, the session VWAP, a Wilder ADX, both pivot
+detectors and the latch logic straight from the PowerLanguage source: every one of the port's
+entries lands on the bar the replay signals, no replay signal is missing from the port, and every
+stop and target price in `data/results/vwap-pullback-adx-orders.csv` equals the replay's pivot
+level.
+
+### VWAP Pullback + ADX Gate against the source's yearly results
+
+The tutorial publishes trade counts and gross profit per year for one NQ contract, 5 January 2021 to
+14 August 2026, from the MultiCharts performance report. `data/NQ/catalog` holds 1-second bars from
+2010 to 2026-07-31, so the same years replay here with the 1-second source as the magnifier:
+
+```bash
+uv run python main.py backtest `
+  --log-level ERROR `
+  --start 2024-12-28 `
+  --end 2026-01-01 `
+  --catalog-path data/NQ/catalog `
+  --no-visualize `
+  vwap-pullback-adx run `
+  --bar-type NQ.c.0.GLBX-1-MINUTE-LAST-INTERNAL@1-SECOND-EXTERNAL `
+  --contracts 1
+```
+
+Chunking is not optional: `_load_backtest_data` materialises every source bar, and one year of
+1-second data is 12 to 13 million of them, which a 32 GB machine with anything else open runs out
+of memory on — 2021 to 2023 ran as whole years, 2024 onwards as half-years. Each chunk starts four
+days early so the pivots and the ADX are warm on its first day, and the trades below are those
+opened inside the chunk's own window.
+
+| year | port trades | port net | targets / stops / flattens | win rate | source trades | source net |
+|---|---|---|---|---|---|---|
+| 2021 | 108 | $2,090 | 69 / 36 / 3 | 66.7% | 110 | $4,155 |
+| 2022 | 111 | $5,360 | 68 / 35 / 8 | 62.2% | 112 | $3,350 |
+| 2023 | 121 | $9,975 | 82 / 35 / 4 | 68.6% | 122 | $13,285 |
+| 2024 | 125 | $11,250 | 80 / 38 / 7 | 68.0% | 127 | $11,850 |
+| 2025 | 128 | $28,265 | 80 / 36 / 12 | 66.4% | 131 | $25,265 |
+| 2026 · to 31 Jul | 66 | $23,195 | 47 / 13 / 6 | 74.2% | 71 · to 14 Aug | $24,515 |
+| **total** | **659** | **$80,135** | 426 / 193 / 40 | **67.2%** | **673** | **$82,420** |
+
+**The port reproduces the source to within a few trades a year and the same profit factor over
+the whole sample.** 659 trades against 673 with two weeks of 2026 missing, $80,135 against
+$82,420, a 67.2% win rate against 67.2%, and a gross profit factor of 1.42 against 1.42. The
+source's own in-sample / out-of-sample split holds too: 2021 → 2024 gives 465 trades and $28,675
+at a 1.21 profit factor here against its 471 and $32,640 at 1.24, and 2025 onwards 194 trades and
+$51,460 at 1.97 against 202 and $49,780 at 1.84. The exit mix is 64.6 / 29.3 / 6.1 percent against
+the published 64.5 / 29.1 / 6.4. The residual per-year gap runs both ways — 2023 lands $3,310 under
+and 2025 $3,000 over — and is what a different data series (Databento continuous against the
+source's "NQ TIP" symbol), a signal-close fill against a next-bar-open fill, and the refused
+after-flatten entries add up to on a median bracket of tens of points. There is nothing in it that
+points at a rules difference.
+
+The 2021 row is the one to read with care on both sides: at $2,090 gross over 108 trades the port
+does not cover the source's own $15 round-trip cost basis, and the source at $4,155 barely does,
+which is the tutorial's own point about that year.
+
+There is no slippage flag, because the source has no slippage input; its cost basis is $2.50 a side
+plus one tick, $15 a round trip, and `--commission-per-contract 2.5` reproduces the commission half
+of that.
 
 ## Subscribe
 
