@@ -336,9 +336,11 @@ from cli.backtest.drift_pullback import cli as drift_pullback_cli
 from cli.backtest.htf_sweep_cisd import cli as htf_sweep_cisd_cli
 from cli.backtest.overnight_bias_orb import cli as overnight_bias_orb_cli
 from cli.backtest.subscribe import cli as subscribe_cli
+from cli.backtest.vault_break import cli as vault_break_cli
 
 
 cli.add_typer(subscribe_cli, name="subscribe")
 cli.add_typer(drift_pullback_cli, name="drift-pullback")
 cli.add_typer(htf_sweep_cisd_cli, name="htf-sweep-cisd")
 cli.add_typer(overnight_bias_orb_cli, name="overnight-bias-orb")
+cli.add_typer(vault_break_cli, name="vault-break")

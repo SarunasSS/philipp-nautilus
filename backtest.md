@@ -5,9 +5,9 @@ the `\` used in README.md.
 source named after the `@` in `--ltf-bar-type` / `--bar-type`. Do not reintroduce it.
 
 Only `htf_sweep_cisd` sizes by risk: `--risk-per-trade` across the entry-to-stop distance, capped by
-`--max-contracts`. The other two take a flat `--contracts`, for opposite reasons — DriftPullback's
-stop is a fixed point distance, so risk sizing would resolve to a constant anyway, while
-OvernightBiasORB's stop is a fraction of a rolling daily true range, so the dollar risk already
+`--max-contracts`. The other three take a flat `--contracts`, for opposite reasons — DriftPullback's
+and VaultBreak's stops are fixed point distances, so risk sizing would resolve to a constant anyway,
+while OvernightBiasORB's stop is a fraction of a rolling daily true range, so the dollar risk already
 tracks volatility at a fixed size. The tick value is derived from the catalog instrument, which is
 why the continuous-contract multiplier had to be repaired — `ES.c.0.GLBX` and `NQ.c.0.GLBX` used to
 carry a placeholder `1` cloned from the first definition record in the DBN file, and now hold the
@@ -16,8 +16,8 @@ real `50` and `20`. A wrong multiplier there silently mis-sizes every trade.
 `htf_sweep_cisd` runs one trade at a time under netting; it previously used hedging and took roughly
 a quarter more entries, so results before and after that change are not comparable.
 
-This branch carries four strategies — `htf-sweep-cisd`, `drift-pullback`, `overnight-bias-orb` and
-`subscribe` — and only those are documented here. The `notes/` evidence files and
+This branch carries five strategies — `htf-sweep-cisd`, `drift-pullback`, `overnight-bias-orb`,
+`vault-break` and `subscribe` — and only those are documented here. The `notes/` evidence files and
 `scripts/drift_pullback_verify.py` referenced below live on `Philipp_Strategy01`, not here.
 
 ## HTF sweep + CISD
@@ -347,6 +347,127 @@ the 2026 window reached the 3R target against 10 stops — on resolved trades al
 and the 24 flattens at `--session-cutoff` supply all of the profit. It holds at scale: 53.6% winners
 over 591 trades, far above the ~36% a 3:1 payoff at PF 1.66 implies. Ablate `--session-cutoff` and
 `--take-profit-rr` before trusting the published framing.
+
+## VaultBreak
+
+The only long-only strategy here, and the second whose bracket is a fixed point distance. It reads a
+single 30-minute stream, and `--bar-type` must name a composite source: that source is the one-minute
+bar magnifier the source material requires, and it is what lets a trade open and close inside one
+30-minute bar — which the reference trade list below does 14 times out of 43.
+
+Catalog coverage for the 1-minute NQ set at `data/catalog` is 2026-01-01 → 2026-05-29 17:00 ET.
+
+```bash
+uv run python main.py backtest `
+  --trader-id PHILIPP-001 `
+  --log-level INFO `
+  --start 2026-01-01 `
+  --end 2026-05-30 `
+  --catalog-path data/catalog `
+  --starting-balance "100000 USD" `
+  --visualize `
+  --chart-bar-type NQ.c.0.GLBX-30-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL `
+  --chart-bar-limit 10000 `
+  vault-break run `
+  --bar-type NQ.c.0.GLBX-30-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL `
+  --session-timezone America/New_York `
+  --earliest-entry 11:00 `
+  --flatten-time 15:30 `
+  --noise-multiple 0.3 `
+  --boundary-atr-days 15 `
+  --max-trades-per-day 3 `
+  --vwap-exit-bars 7 `
+  --take-profit-points 40 `
+  --stop-loss-points 75 `
+  --contracts 1
+```
+
+Note the `--end 2026-05-30` where the other sections use 05-29. `--end` is exclusive, so passing
+05-29 silently drops that whole session — which costs the last trade of the reference comparison
+below and is easy to mistake for a rules difference. `--chart-bar-type` has to be given for the same
+reason it does everywhere else: it defaults to the catalog bar type, which here is the one-minute
+source the strategy never trades on.
+
+Each session fixes one level. The first traded bar of the day supplies the session open, and
+`--noise-multiple` of a `--boundary-atr-days` mean of completed session ranges is added to it; that
+sum is the noise boundary and it does not move again all day. Inside the entry window, any bar
+closing above both the boundary and the session VWAP is bought at market, up to
+`--max-trades-per-day`, one position at a time. Exits are `--take-profit-points` above and
+`--stop-loss-points` below the **fill**, plus a flatten at `--flatten-time`.
+
+**Session times are Eastern, and the daily roll follows `--session-timezone` too.** The source ships
+Central inputs (1000 / 1430) and its own header gives the Eastern equivalents. That choice is not
+cosmetic here, because the roll is what anchors the session open, the session range and the VWAP.
+Replaying the rules over this catalog against the source's 43-trade reference list reproduces **42
+on an Eastern-keyed day, 39 on a Central-keyed one and 27 on a Globex trade day**, so Eastern is what
+is implemented. `--session-timezone America/Chicago --earliest-entry 10:00 --flatten-time 14:30`
+gives the literal Central reading — the same entry window in absolute time, with the day rolling at
+midnight CT — and is the first thing to try if a comparison ever misses on *which sessions* trade.
+
+**The bracket is in points, and `--contracts` does not move it.** The source expresses it in dollars
+under `SetStopPosition`, which makes $800 / $1500 whole-position amounts: on NQ at one contract those
+are exactly the 40 and 75 points shipped here, but at two contracts the source would tighten them to
+20 and 37.5 and silently become a different strategy. Points instead make `--contracts` a linear
+multiplier on dollar risk, and take `instrument.multiplier` out of the level arithmetic altogether —
+worth having, given the placeholder-multiplier hazard described at the top of this file. The cost is
+that 40 and 75 are NQ figures where dollars would have carried to another contract.
+
+**Nothing trades for the first `--boundary-atr-days` sessions.** The boundary reference is empty
+until then and the entry gate refuses without it. Over the command above the reference completes on
+2026-01-19, the sixteenth session, exactly as the source header says it should, and the first entry
+lands on 2026-01-21.
+
+### VaultBreak against the MultiCharts reference
+
+`docs/VaultBreak/Backtesting Strategy Performance Report _ NQ TIP Data - 30 Minutes IP_VaultBreak.xlsx`
+holds the 43 trades the original produced over 2026-04-22 → 2026-05-29. Restricting the run above to
+that window:
+
+| | port | MultiCharts |
+|---|---|---|
+| entries | 46 | 43 |
+| exits | 28 target / 15 stop / 3 flatten | 27 target / 13 stop / 3 flatten |
+| net | $160 | $2,360 |
+
+**All 43 reference trades are reproduced**, on the same signal bar, with the same exit reason, and
+their net is identical to the dollar at $2,360. Entry fill prices differ by at most 1.25 points and
+0.33 on average, which is the gap between the source's "NQ TIP" series and this Databento continuous
+one. MultiCharts stamps a fill with the close of the 30-minute bar containing it, so its stamps run
+one bar ahead of `ts_opened` in `data/results/vault-break-positions.csv`.
+
+The whole difference is three extra entries — 2026-05-21 14:30, 2026-05-29 12:00 and 13:30 by the
+MultiCharts stamp — and all three clear the noise boundary by **1.91, 5.59 and 4.84 points** against
+a median margin of 114 points across all 125 entries of the full run. They are the same data gap
+seen from the other side: 2026-05-29 offers three signals clearing by +5.59, +11.84 and +4.84, and
+the reference takes exactly the one at +11.84, which is what a boundary sitting some six points
+higher would do.
+
+### What the reference window does not show
+
+Over the full 2026-01-01 → 2026-05-30 run the strategy takes 125 trades and **loses $3,480** on one
+contract with no costs, against the reference window's +$2,360. The decomposition is worth knowing
+before trusting either number:
+
+- 75 targets and 40 stops cancel to **exactly zero** — 40 × 75 points against 75 × 40 points.
+- All of the loss is the 10 flattens at `--flatten-time`, which is the mirror image of
+  OvernightBiasORB, where the time exit supplies all of the profit.
+- The bracket therefore resolved at 75 of 115, or 65.2%, which is precisely the break-even rate a
+  40:75 payoff needs. There is no margin in it at these settings over this sample.
+
+Monthly, on one contract: January −$3,995 (9 trades), February −$3,335 (24), March +$1,600 (25),
+April +$5,030 (31), May −$2,780 (36). Five months is a short sample and the warm-up eats half of
+January, but the reference window is 43 of those 125 trades and is not representative of the rest.
+
+**`--vwap-exit-bars` never fires.** Not once in the reference list, and not once in this run — the
+counter never passed 1 while a position was open. Seven consecutive closes below the session VWAP is
+three and a half hours inside a four and a half hour window, on a trade that had to close *above*
+the VWAP to open and that resolves in a bar or two. The rule is implemented because it is in the
+source, but treat the shipped 7 as carried over rather than measured. The source's `VB8.Carry` guard
+is likewise unreachable here and is a comment rather than code, for the reason given at
+`strategies/vault_break.py:_roll_session`.
+
+There is no slippage flag, because the source has no slippage input; the top-level
+`--commission-per-contract` is the knob to reach for.
 
 ## Subscribe
 

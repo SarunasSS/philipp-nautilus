@@ -11,7 +11,8 @@ cli/
 │   ├── drift_pullback.py
 │   ├── htf_sweep_cisd.py
 │   ├── overnight_bias_orb.py
-│   └── subscribe.py
+│   ├── subscribe.py
+│   └── vault_break.py
 ├── catalog.py           # Download Databento bars into the catalog
 └── live/                # Run live strategies through configured data providers
     ├── __init__.py      # Shared live callback and runner
@@ -38,7 +39,8 @@ strategies/
 ├── execute.py           # ExecuteStrategy subscription plus execution tests
 ├── htf_sweep_cisd.py    # HTF sweep + CISD managed trade strategy
 ├── overnight_bias_orb.py # Opening range breakout taken only with the overnight gap bias
-└── subscribe.py         # SubscribeStrategy requests and logs bars
+├── subscribe.py         # SubscribeStrategy requests and logs bars
+└── vault_break.py       # Session noise-boundary breakout bought above the session VWAP
 ```
 
 ## Setup
@@ -243,6 +245,47 @@ top-level `--commission-per-contract` instead.
 `--chart-bar-type` has to be given. It defaults to the catalog bar type, which on this path is the
 one-minute source the strategy never trades on; pointing it at the 15-minute stream is what puts the
 fills on the bars that produced them.
+
+Run VaultBreak, a long-only session breakout that buys a 30-minute bar closing above both a noise
+boundary fixed once per day and the session VWAP. `--bar-type` must name a composite source: that
+source is the one-minute bar magnifier the source material requires, and it is what lets a trade open
+and close inside a single 30-minute bar.
+
+```bash
+uv run python main.py backtest \
+  --start 2026-01-01 \
+  --end 2026-05-30 \
+  --chart-bar-type NQ.c.0.GLBX-30-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL \
+  vault-break run \
+  --bar-type NQ.c.0.GLBX-30-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL \
+  --contracts 1
+```
+
+Each session fixes one level and then never moves it: the first traded bar of the day supplies the
+open, and `--noise-multiple` of a `--boundary-atr-days` mean of completed session ranges is added to
+it. Any bar in the entry window closing above both that boundary and the session VWAP is bought at
+market, up to `--max-trades-per-day`, one position at a time. Exits are `--take-profit-points` above
+and `--stop-loss-points` below the actual fill, plus a flatten at `--flatten-time`.
+
+**Session times are Eastern, and so is the daily roll.** The source ships Central inputs and its own
+header gives the Eastern equivalents. That is not cosmetic, because the roll anchors the session
+open, the session range and the VWAP all at once: replaying the rules against the source's 43-trade
+reference list reproduces 42 on an Eastern-keyed day, 39 on a Central-keyed one and 27 on a Globex
+trade day.
+
+**The bracket is a fixed point distance and `--contracts` only scales the dollars.** The source
+expresses it as whole-position dollar amounts, which on NQ at one contract are exactly the 40 and 75
+points shipped here but would tighten to 20 and 37.5 at two contracts. Points keep the levels put and
+keep the instrument multiplier out of the arithmetic.
+
+Nothing trades until `--boundary-atr-days` sessions have completed, so the sixteenth session of a run
+is the first that can trade. Against the MultiCharts reference over 2026-04-22 → 2026-05-29 the port
+reproduces **all 43 trades**, on the same signal bars, with the same exit reasons and an identical
+$2,360 net; it adds three more, each clearing the boundary by under six points against a median
+margin of 114. Over the full five months, though, it takes 125 trades and **loses $3,480** on one
+contract: the 75 targets and 40 stops cancel to exactly zero and every dollar of the loss is the ten
+flattens at `--flatten-time`. `--vwap-exit-bars` never fires at all. See [backtest.md](backtest.md)
+for the full comparison and the numbers behind each claim.
 
 Each backtest exports Nautilus order, order-fill, fill, position, and account reports as strategy-prefixed CSV files under `data/results/`. It also creates two interactive, self-contained HTML files:
 
