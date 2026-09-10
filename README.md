@@ -8,6 +8,7 @@ NautilusTrader scaffold for backtesting experiments and live market-data/executi
 cli/
 ├── backtest/            # Run catalog-backed backtests
 │   ├── __init__.py      # Shared backtest callback and runner helpers
+│   ├── drift_pullback.py
 │   ├── htf_sweep_cisd.py
 │   └── subscribe.py
 ├── catalog.py           # Download Databento bars into the catalog
@@ -32,6 +33,7 @@ src/phillip/adapters/tradovate/
 └── websocket/           # Framing, heartbeat, and reconnect handling
 strategies/
 ├── base.py              # Shared live/backtest stratlet lifecycle
+├── drift_pullback.py    # Session-VWAP drift continuation bought on the first 5-minute pullback
 ├── execute.py           # ExecuteStrategy subscription plus execution tests
 ├── htf_sweep_cisd.py    # HTF sweep + CISD managed trade strategy
 └── subscribe.py         # SubscribeStrategy requests and logs bars
@@ -86,6 +88,56 @@ uv run python main.py backtest \
 ```
 
 `--entry-limit-offset` and `--stop-limit-offset` are direct ratios, so `0.001` means `0.1%`. `--trade-notional` defaults to `1000`; the NQ example above uses `1000000` so contract sizing produces filled futures orders in the local backtest. Signal cooldown defaults to one HTF period and can be overridden with `--signal-cooldown-seconds`. The HTF sweep backtest uses hedging mode so concurrent entries retain separate positions.
+
+Run DriftPullback, an intraday drift-continuation model bought on the first pullback against the
+drift. It is the only strategy here that reads **three** bar streams of one instrument: the session
+VWAP accumulates on the fastest, the anchor and drift are frozen on the slowest, and the pullback
+triggers on the middle one.
+
+```bash
+uv run python main.py backtest   --start 2026-04-01   --end 2026-05-01   drift-pullback run   --bar-type NQ.c.0.GLBX-5-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL   --signal-bar-type NQ.c.0.GLBX-15-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL   --vwap-bar-type NQ.c.0.GLBX-1-MINUTE-LAST-EXTERNAL   --contracts 1
+```
+
+At every 15-minute close the setup arms long when three things hold together: the close is above the
+session VWAP, the VWAP is itself rising against its previous 15-minute snapshot, and the close is at
+least `--drift-threshold-pct` above the close `--drift-lookback-bars` signal bars ago. The short side
+is the exact mirror. A signal bar that satisfies neither set **disarms** rather than leaving the
+previous setup standing. Once armed, the first 5-minute bar that closes against the drift - red for a
+long, green for a short - is bought at market on the next bar, and the flag is spent whether or not
+the fill arrives.
+
+Everything the 15-minute stream computes is frozen between its own boundaries, which is what makes
+the backtest and a live run see the same signal inside a signal bar. Coincident bars arrive VWAP
+source first, then the signal bar, then the execution bar, so the bar that arms a setup can also be
+the bar that triggers it.
+
+`--vwap-bar-type` is a separate option rather than being derived from `--bar-type`, and it should
+stay at one minute. The spec accumulates the anchor from 15-minute bars, which measures **3.11
+points** away from the true tick VWAP against **0.33** for one minute, and moves the arming verdict
+on ~2% of boundaries; one minute is also the finest resolution the Tradovate live client can deliver,
+so keeping it there is what makes the backtest anchor and the live anchor the same number. Pass the
+15-minute type to run the literal reading.
+
+Exits are fixed point distances from the actual fill, not from the signal bar, so they are attached
+once the market entry fills: `--long-stop-points` / `--long-target-points` and the short pair, with
+`--stop-slip-ticks` pushing the stop that many ticks further against you and leaving the target
+alone. That is a deliberate pessimism in the backtest, not a trading rule. Every open position is
+flattened at `--session-cutoff` regardless.
+
+The guardrails come from the account rather than the edge: `--max-trades-per-day` caps entries and
+`--max-losses-per-day` stops the session after that many losing round trips, so the worst day is
+known in advance - two 80.5-point stops, $3,220 per NQ contract. Sizing is a flat `--contracts`;
+there is no risk-derived sizing here, because the stop is a constant.
+
+Note that `--pullback-window-bars` **cannot bind at any value of 3 or more** - arming is
+re-evaluated every 15-minute boundary and always resets the counter, so a run at 3 is byte-identical
+to the shipped default of 6.
+
+The strategy also runs on **tick data**, and the bar types select it: a type naming a composite
+source such as `@1-MINUTE-EXTERNAL` is built from a bar catalog, while a plain
+`NQ.c.0.GLBX-5-MINUTE-LAST-INTERNAL` can only be aggregated from prints, so it selects the tick
+runner on its own. There is no separate flag that could contradict the bar types. A tick-fed run
+needs quote and trade ticks in the catalog, which this branch has no download command for.
 
 Each backtest exports Nautilus order, order-fill, fill, position, and account reports as strategy-prefixed CSV files under `data/results/`. It also creates two interactive, self-contained HTML files:
 

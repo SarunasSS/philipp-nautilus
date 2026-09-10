@@ -7,6 +7,7 @@ from dataclasses import field
 
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.model.data import Bar
+from nautilus_trader.model.data import TradeTick
 from nautilus_trader.model.events import OrderEvent
 from nautilus_trader.model.events import PositionEvent
 from nautilus_trader.trading.strategy import Strategy
@@ -66,6 +67,9 @@ class BaseStrategy(Strategy):
             raise RuntimeError("Live strategy requires the Nautilus asyncio event loop")
 
     def on_bar(self, bar: Bar) -> None:
+        self._update()
+
+    def on_trade_tick(self, tick: TradeTick) -> None:
         self._update()
 
     def on_order_event(self, event: OrderEvent) -> None:
