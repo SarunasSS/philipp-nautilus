@@ -10,6 +10,7 @@ cli/
 │   ├── __init__.py      # Shared backtest callback and runner helpers
 │   ├── drift_pullback.py
 │   ├── htf_sweep_cisd.py
+│   ├── overnight_bias_orb.py
 │   └── subscribe.py
 ├── catalog.py           # Download Databento bars into the catalog
 └── live/                # Run live strategies through configured data providers
@@ -36,6 +37,7 @@ strategies/
 ├── drift_pullback.py    # Session-VWAP drift continuation bought on the first 5-minute pullback
 ├── execute.py           # ExecuteStrategy subscription plus execution tests
 ├── htf_sweep_cisd.py    # HTF sweep + CISD managed trade strategy
+├── overnight_bias_orb.py # Opening range breakout taken only with the overnight gap bias
 └── subscribe.py         # SubscribeStrategy requests and logs bars
 ```
 
@@ -143,6 +145,104 @@ source such as `@1-MINUTE-EXTERNAL` is built from a bar catalog, while a plain
 `NQ.c.0.GLBX-5-MINUTE-LAST-INTERNAL` can only be aggregated from prints, so it selects the tick
 runner on its own. There is no separate flag that could contradict the bar types. A tick-fed run
 needs quote and trade ticks in the catalog, which this branch has no download command for.
+
+Run OvernightBiasORB, an opening-range breakout that is only allowed to trade in the direction the
+overnight gap implies. It reads a single 15-minute stream, and the composite source named after the
+`@` is doing real work: the venue matches resting orders against the bars the engine is fed, so a
+`@1-MINUTE-EXTERNAL` source is exactly the one-minute bar magnifier the source material requires. A
+bar type with no composite source is refused rather than silently run without one.
+
+```bash
+uv run python main.py backtest \
+  --start 2026-01-01 \
+  --end 2026-05-29 \
+  --chart-bar-type NQ.c.0.GLBX-15-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL \
+  overnight-bias-orb run \
+  --bar-type NQ.c.0.GLBX-15-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL \
+  --contracts 1
+```
+
+Each session freezes a direction once, from the open of the first bar of the opening range: where
+that open sits inside the overnight range decides the day. At or above `--bias-long-min` of the range
+the day is long-only, at or below `--bias-short-max` short-only, and anything between the two is a
+no-trade day - so the rule is gap **continuation**, not mean reversion. The opening range itself is
+then locked at `--opening-range-end`, and the first bar that *closes* beyond it in the frozen
+direction is bought or sold at market. A break that is rejected by one of the filters spends nothing:
+the level stays live and a later bar closing beyond it can still trigger, up to `--max-trades-per-day`.
+
+**The overnight range runs from midnight, not from the 18:00 Globex open.** The source resets it on a
+calendar-date change and extends it up to `--session-start`, which on Eastern-keyed data means
+`(00:00, 09:30]`. That range is the denominator of the whole bias rule, and it is the reading the
+source's published statistics came from, so it is the one implemented here.
+
+**Session times are Eastern.** The source material also carries a Central column
+(0830 / 0845 / 1200 / 1430 / 1500); against ET-keyed data those trade an hour off the validated
+window without erroring.
+
+Three filters sit in front of the break, and two of them bind on real data. `--adx-min` is a Wilder
+ADX gate meant to sit out chop - Nautilus ships no ADX, so it is computed here, and a
+simple-average lookalike would pass different bars. `--min-or-multiple` / `--max-or-multiple` reject
+a session whose opening range is out of character against a `--or-median-days` reference. Over
+January to May 2026 those two together remove 9 of 46 entries. The third,
+`--break-skip-multiple`, skips a break printed on a bar wider than that many prior average ranges.
+It does reject breaks - it is what turns away the 88.75-point bar that broke out on 23 January -
+but over the same window it changed the trade count by zero, because every session where it
+rejected a break either had no bias or went on to trade a later one. Treat its shipped 2.5 as
+carried over from the source rather than as a measured setting.
+
+**Two warm-ups run before the strategy is fully armed, and the second one is silent.** Nothing trades
+until `--atr-days` complete regular-hours sessions have been seen, because the stop is
+`--atr-multiple` of that reference and there is no stop without it. The opening-range band then stays
+switched **off** until `--or-median-days` ranges have accumulated. At the defaults that is no trades
+for 15 sessions and then five sessions traded with one filter missing. Both counters are
+run-lifetime, not per-day, so a run shorter than about two months is mostly warm-up: over the
+January to May window above the reference completes on 23 January, the sixteenth session, and the
+first trade lands on 26 January.
+
+Risk is not flat here even though size is. The stop is `--atr-multiple` times a 15-day average of
+daily regular-hours true ranges, so it moves with volatility - 37.50 to 140.50 points across the
+stopped trades of the 2026 sample, or $750 to $2,810 a contract on NQ - and `--take-profit-rr`
+puts the target at a whole multiple of it. That is why sizing is a flat `--contracts` with no
+`--risk-per-trade`: the dollar risk is already tracking volatility.
+
+Against the source's own out-of-sample claim the port lands close. Replaying 2020-01-01 to
+2026-07-31 on `data/NQ/catalog` in year chunks, each given a six-week warm-up prefix so no chunk
+loses trades to the ladder above, gives **591 trades, $228,700 net and a 1.58 profit factor on one
+contract, with a $19,135 maximum drawdown** - against the header's 599 trades, $257,615 and 1.66
+measured to 2026-08-31, one month further on than the catalog reaches. Every year is profitable and
+the worst of them, 2025, still returns 1.11. The residual gap is most likely the data rather than
+the rules: this runs on a Databento continuous NQ series, not the one the source was validated
+against.
+
+```bash
+uv run python main.py backtest \
+  --log-level ERROR \
+  --start 2019-11-15 \
+  --end 2021-01-01 \
+  --catalog-path data/NQ/catalog \
+  --no-visualize \
+  overnight-bias-orb run \
+  --bar-type NQ.c.0.GLBX-15-MINUTE-LAST-INTERNAL@1-SECOND-EXTERNAL \
+  --contracts 1
+```
+
+Chunking is not optional there: `_load_backtest_data` materialises every source bar into a list, and
+one year of 1-second data is already about 14 million of them. That 1-second source is also a finer
+magnifier than the one minute the material specifies, so its exit fills are a little kinder.
+
+Both exits are measured from the **signal bar's close**, which is the reverse of DriftPullback's
+measurement from the fill. In this engine a market order submitted from `on_bar` settles against the
+book that bar left behind, so it fills at that same close and every trade is exactly one unit of risk
+against `--take-profit-rr` units of reward. The source instead fills at the next bar's open; inside
+a continuous session that is the same price give or take a tick, so the difference is small and not
+reliably in either direction. The same one-bar offset applies to `--session-cutoff`, which flattens
+at that bar's close where the source flattens at the next bar's open. There is no slippage knob,
+because the source has no slippage input; reach for the
+top-level `--commission-per-contract` instead.
+
+`--chart-bar-type` has to be given. It defaults to the catalog bar type, which on this path is the
+one-minute source the strategy never trades on; pointing it at the 15-minute stream is what puts the
+fills on the bars that produced them.
 
 Each backtest exports Nautilus order, order-fill, fill, position, and account reports as strategy-prefixed CSV files under `data/results/`. It also creates two interactive, self-contained HTML files:
 
