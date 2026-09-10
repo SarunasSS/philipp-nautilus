@@ -81,13 +81,18 @@ uv run python main.py backtest \
   --ltf-bar-type NQ.c.0.GLBX-1-MINUTE-LAST-EXTERNAL \
   --entry-order-type LIMIT \
   --entry-limit-offset 0.0 \
-  --trade-notional 1000000 \
+  --risk-per-trade 1000 \
+  --max-contracts 5 \
   --stop-order-type MARKET \
   --stop-loss-distance-ratio 1.0 \
   --take-profit-multiplier 2.0
 ```
 
-`--entry-limit-offset` and `--stop-limit-offset` are direct ratios, so `0.001` means `0.1%`. `--trade-notional` defaults to `1000`; the NQ example above uses `1000000` so contract sizing produces filled futures orders in the local backtest. Signal cooldown defaults to one HTF period and can be overridden with `--signal-cooldown-seconds`. The HTF sweep backtest uses hedging mode so concurrent entries retain separate positions.
+`--entry-limit-offset` and `--stop-limit-offset` are direct ratios, so `0.001` means `0.1%`. Signal cooldown defaults to one HTF period and can be overridden with `--signal-cooldown-seconds`.
+
+Sizing is risk-based: `--risk-per-trade` is the cash put at risk on each trade, spread across the distance from the entry to the stop, and it defaults to `1000`. The stop follows from the CISD level and the swept swing alone, so it is known before the entry order goes out, which is what makes that sizing possible. A tight stop therefore buys more contracts than a wide one — `--max-contracts` caps that, and left unset the risk figure alone decides. The strategy takes one trade at a time and the venue nets, so a signal arriving while a trade is still open is skipped rather than opening a second position.
+
+`--ltf-bar-type` may either be the catalog bar type itself or a composite aggregated from it, such as `NQ.c.0.GLBX-5-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL`; in the composite case the catalog source is loaded and the LTF stream is aggregated from it. HTF and LTF have to aggregate from the same source bar type.
 
 Run DriftPullback, an intraday drift-continuation model bought on the first pullback against the
 drift. It is the only strategy here that reads **three** bar streams of one instrument: the session
@@ -155,7 +160,7 @@ uv run python main.py backtest \
   htf-sweep-cisd run \
   --htf-bar-type NQ.c.0.GLBX-15-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL \
   --ltf-bar-type NQ.c.0.GLBX-1-MINUTE-LAST-EXTERNAL \
-  --trade-notional 1000000
+  --risk-per-trade 1000
 ```
 
 Run the same generic subscribe strategy against live Tradovate bars:
