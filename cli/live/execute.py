@@ -4,6 +4,9 @@ import typer
 from typing import Annotated
 
 
+from nautilus_trader.model.data import BarType
+
+
 from strategies.execute import ExecuteStrategy
 from strategies.execute import ExecuteStrategyConfig
 from strategies.execute import ExecutionCase
@@ -56,6 +59,7 @@ def _run_execute(
     ] = 0.0,
 ) -> None:
     _run_live(
+        data_instrument_ids=[BarType.from_str(bar_type).instrument_id],
         settings=_get_live_settings(ctx),
         strategy=ExecuteStrategy(
             config=ExecuteStrategyConfig(

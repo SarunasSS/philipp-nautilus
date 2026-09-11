@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: subscribe
+  labels:
+    app.kubernetes.io/name: subscribe
+    app.kubernetes.io/part-of: trading
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: subscribe
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: subscribe
+        app.kubernetes.io/part-of: trading
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: subscribe
+          image: nautilus:review-required
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - main.py
+          args:
+            - live
+            - --environment
+            - demo
+            - --trader-id
+            - $(TRADER_ID)
+            - --log-level
+            - $(LOG_LEVEL)
+            - subscribe
+            - run
+            - --bar-type
+            - $(BAR_TYPE)
+          env:
+            - name: DATABENTO_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: trading-env
+                  key: DATABENTO_API_KEY
+            - name: TRADER_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: subscribe-config
+                  key: TRADER_ID
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: subscribe-config
+                  key: LOG_LEVEL
+            - name: BAR_TYPE
+              valueFrom:
+                configMapKeyRef:
+                  name: subscribe-config
+                  key: BAR_TYPE
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL

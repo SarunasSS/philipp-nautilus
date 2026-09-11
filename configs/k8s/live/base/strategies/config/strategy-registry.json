@@ -1,0 +1,42 @@
+{
+  "strategies": [
+    {
+      "id": "subscribe",
+      "display_name": "Subscribe",
+      "config_map": "subscribe-config",
+      "deployment": "subscribe",
+      "log_app": "subscribe",
+      "fields": [
+        {
+          "key": "TRADER_ID",
+          "label": "Trader ID",
+          "type": "string",
+          "validator": "nautilus_trader_id",
+          "pattern": "^[A-Z0-9][A-Z0-9_-]{2,63}$",
+          "min_length": 3,
+          "max_length": 64,
+          "tooltip": "Valid Nautilus TraderId using uppercase letters, numbers, underscores, or hyphens."
+        },
+        {
+          "key": "LOG_LEVEL",
+          "label": "Log level",
+          "type": "select",
+          "validator": "choice",
+          "options": ["OFF", "TRACE", "DEBUG", "INFO", "WARNING", "ERROR"],
+          "max_length": 7,
+          "tooltip": "Nautilus console log level."
+        },
+        {
+          "key": "BAR_TYPE",
+          "label": "Bar type",
+          "type": "string",
+          "validator": "nautilus_bar_type",
+          "pattern": "^[A-Za-z0-9._@-]+$",
+          "min_length": 1,
+          "max_length": 255,
+          "tooltip": "Canonical Nautilus BarType, including the source after @ when internally aggregated."
+        }
+      ]
+    }
+  ]
+}

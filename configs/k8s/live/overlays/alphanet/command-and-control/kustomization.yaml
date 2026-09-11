@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: philipp-trading-dev
+
+resources:
+  - ../../../base/command-and-control
+  - control-auth-external-secret.yaml
+  - grafana-external-secret.yaml
+  - grafana-user-external-secret.yaml
+  - ingress.yaml
+
+configMapGenerator:
+  - name: command-control-config
+    behavior: replace
+    literals:
+      - CLUSTER_NAME=alphanet
+      - ENVIRONMENT=dev
+      - GRAFANA_ROOT_URL=https://dashboard.dev.philipp-trading.apps.1d.works
+
+images:
+  - name: grafana/alloy
+    newTag: v1.18.0
+  - name: grafana/grafana
+    newTag: 13.2.0
+  - name: grafana/loki
+    newTag: 3.7.6

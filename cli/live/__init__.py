@@ -9,8 +9,10 @@ from typing import Any
 
 from nautilus_trader.adapters.databento import DATABENTO
 from nautilus_trader.adapters.databento import DatabentoDataClientConfig
+from nautilus_trader.adapters.databento import DatabentoDataLoader
 from nautilus_trader.adapters.databento import DatabentoLiveDataClientFactory
 from nautilus_trader.common.config import LoggingConfig
+from nautilus_trader.config import InstrumentProviderConfig
 from nautilus_trader.config import LiveDataClientConfig
 from nautilus_trader.config import LiveExecClientConfig
 from nautilus_trader.config import LiveExecEngineConfig
@@ -18,6 +20,7 @@ from nautilus_trader.config import TradingNodeConfig
 from nautilus_trader.live.factories import LiveDataClientFactory
 from nautilus_trader.live.factories import LiveExecClientFactory
 from nautilus_trader.live.node import TradingNode
+from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.identifiers import TraderId
 from nautilus_trader.trading.strategy import Strategy
 
@@ -157,6 +160,7 @@ def _get_live_settings(ctx: typer.Context) -> LiveRunSettings:
 def _run_live(
     settings: LiveRunSettings,
     strategy: Strategy,
+    data_instrument_ids: list[InstrumentId],
 ) -> None:
     data_clients: dict[str, LiveDataClientConfig] = {}
     data_client_factories: dict[str, type[LiveDataClientFactory]] = {}
@@ -164,8 +168,22 @@ def _run_live(
     exec_client_factories: dict[str, type[LiveExecClientFactory]] = {}
 
     if settings.databento_api_key:
+        databento_loader = DatabentoDataLoader()
+        databento_instrument_ids: list[InstrumentId] = []
+        for instrument_id in data_instrument_ids:
+            try:
+                databento_loader.get_dataset_for_venue(instrument_id.venue)
+            except ValueError:
+                continue
+
+            databento_instrument_ids.append(instrument_id)
+
         data_clients[DATABENTO] = DatabentoDataClientConfig(
             api_key=settings.databento_api_key,
+            instrument_ids=databento_instrument_ids or None,
+            instrument_provider=InstrumentProviderConfig(
+                load_ids=frozenset(databento_instrument_ids) or None,
+            ),
             use_exchange_as_venue=False,
         )
         data_client_factories[DATABENTO] = DatabentoLiveDataClientFactory

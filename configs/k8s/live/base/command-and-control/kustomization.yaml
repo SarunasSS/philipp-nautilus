@@ -1,0 +1,40 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - alloy-rbac.yaml
+  - alloy.yaml
+  - grafana.yaml
+  - loki.yaml
+
+configMapGenerator:
+  - name: command-control-config
+    literals:
+      - CLUSTER_NAME=review-required
+      - ENVIRONMENT=review-required
+      - GRAFANA_ROOT_URL=https://review-required
+  - name: alloy-config
+    files:
+      - config.alloy=config/alloy.config
+  - name: loki-config
+    files:
+      - config.yaml=config/loki.yaml
+  - name: grafana-provisioning
+    files:
+      - datasource.yaml=config/grafana-datasource.yaml
+      - dashboards.yaml=config/grafana-dashboards.yaml
+  - name: grafana-systems-dashboard
+    files:
+      - systems-logs.json=config/systems-logs.json
+  - name: grafana-strategies-dashboard
+    files:
+      - strategy-control.json=config/strategy-control.json
+      - strategies-logs.json=config/strategies-logs.json
+
+images:
+  - name: grafana/alloy
+    newTag: review-required
+  - name: grafana/grafana
+    newTag: review-required
+  - name: grafana/loki
+    newTag: review-required

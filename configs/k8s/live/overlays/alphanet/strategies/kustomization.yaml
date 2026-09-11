@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: philipp-trading-dev
+
+resources:
+  - ../../../base/strategies
+  - control-auth-external-secret.yaml
+
+patches:
+  - path: subscribe-config-patch.yaml
+
+images:
+  - name: nautilus
+    newName: europe-west1-docker.pkg.dev/oned-works/oned/philipp-trading-dev
+    newTag: 20260825-databento-preload-v1
