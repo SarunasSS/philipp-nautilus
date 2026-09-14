@@ -1,5 +1,6 @@
 import asyncio
 
+from decimal import Decimal
 from typing import Any
 
 from nautilus_trader.cache.cache import Cache
@@ -19,28 +20,18 @@ from nautilus_trader.model.enums import AccountType
 from nautilus_trader.model.enums import OmsType
 from nautilus_trader.model.identifiers import AccountId
 from nautilus_trader.model.identifiers import ClientId
+from nautilus_trader.model.objects import AccountBalance
+from nautilus_trader.model.objects import MarginBalance
+from nautilus_trader.model.objects import Money
 
 from .config import TradovateExecClientConfig
 from .core import TRADOVATE_CLIENT_ID
 from .core import TRADOVATE_VENUE
 from .execution_commands import TradovateOrderCommandClient
-from .execution_parsing import parse_account_balances
 from .execution_reports import TradovateReportProvider
 from .http.client import TradovateHttpClient
 from .providers import TradovateInstrumentProvider
 from .websocket.client import TradovateWebSocketClient
-
-
-_USER_SYNC_ENTITY_TYPES = [
-    "account",
-    "cashBalance",
-    "command",
-    "commandReport",
-    "executionReport",
-    "fill",
-    "order",
-    "position",
-]
 
 
 class TradovateExecutionClient(TradovateOrderCommandClient):
@@ -87,6 +78,7 @@ class TradovateExecutionClient(TradovateOrderCommandClient):
 
     async def _connect(self) -> None:
         access_token = await self._http_client.get_access_token()
+        await self._tradovate_instrument_provider.initialize()
         accounts = await self._http_client.get("/account/list")
         if not isinstance(accounts, list):
             raise TypeError("Expected a list of objects from /account/list")
@@ -211,10 +203,23 @@ class TradovateExecutionClient(TradovateOrderCommandClient):
         )
         if not isinstance(snapshot, dict):
             raise TypeError("Expected an object from /cashBalance/getcashbalancesnapshot")
-        balances, margins = parse_account_balances(snapshot)
+        total = Decimal(str(snapshot.get("netLiq", snapshot.get("totalCashValue", 0)) or 0))
+        initial = Decimal(str(snapshot.get("initialMargin", 0) or 0))
+        maintenance = Decimal(str(snapshot.get("maintenanceMargin", 0) or 0))
         self.generate_account_state(
-            balances=balances,
-            margins=margins,
+            balances=[
+                AccountBalance(
+                    total=Money(total, USD),
+                    locked=Money(initial, USD),
+                    free=Money(total - initial, USD),
+                ),
+            ],
+            margins=[
+                MarginBalance(
+                    initial=Money(initial, USD),
+                    maintenance=Money(maintenance, USD),
+                ),
+            ],
             reported=True,
             ts_event=self._clock.timestamp_ns(),
             info=snapshot,
@@ -224,7 +229,19 @@ class TradovateExecutionClient(TradovateOrderCommandClient):
     async def _subscribe_user_sync(self) -> None:
         await self._ws_client.request(
             "user/syncrequest",
-            {"splitResponses": True, "entityTypes": _USER_SYNC_ENTITY_TYPES},
+            {
+                "splitResponses": True,
+                "entityTypes": [
+                    "account",
+                    "cashBalance",
+                    "command",
+                    "commandReport",
+                    "executionReport",
+                    "fill",
+                    "order",
+                    "position",
+                ],
+            },
         )
 
     async def _restore_user_sync(self) -> None:

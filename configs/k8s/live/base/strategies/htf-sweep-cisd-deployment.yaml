@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: htf-sweep-cisd
+  annotations:
+    philipp.1d.works/activation-pending: >-
+      Publish the Tradovate provider-initialization build as latest before scaling above zero.
+    philipp.1d.works/exit-order-model: >-
+      Independent stop-loss and take-profit without venue reduce-only; the strategy cancels the sibling after detecting a fill.
+  labels:
+    app.kubernetes.io/name: htf-sweep-cisd
+    app.kubernetes.io/part-of: trading
+spec:
+  replicas: 0
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: htf-sweep-cisd
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: htf-sweep-cisd
+        app.kubernetes.io/part-of: trading
+        trading.philipp.io/ib-client: "true"
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: philipp-trading-dev
+          image: philipp-trading-dev:latest
+          imagePullPolicy: Always
+          command:
+            - python
+            - main.py
+          args:
+            - live
+            - htf-sweep-cisd
+            - run
+          envFrom:
+            - configMapRef:
+                name: htf-sweep-cisd-config
+          env:
+            - name: TRADOVATE_ENVIRONMENT
+              value: demo
+            - name: DATABENTO_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: trading-env
+                  key: DATABENTO_API_KEY
+            - name: TRADOVATE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: tradovate-env
+                  key: TRADOVATE_USERNAME
+            - name: TRADOVATE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tradovate-env
+                  key: TRADOVATE_PASSWORD
+            - name: TRADOVATE_APP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: tradovate-env
+                  key: TRADOVATE_APP_ID
+            - name: TRADOVATE_CID
+              valueFrom:
+                secretKeyRef:
+                  name: tradovate-env
+                  key: TRADOVATE_CID
+            - name: TRADOVATE_SEC
+              valueFrom:
+                secretKeyRef:
+                  name: tradovate-env
+                  key: TRADOVATE_SEC
+            - name: TRADOVATE_APP_VERSION
+              valueFrom:
+                secretKeyRef:
+                  name: tradovate-env
+                  key: TRADOVATE_APP_VERSION
+            - name: TRADOVATE_DEVICE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: tradovate-env
+                  key: TRADOVATE_DEVICE_ID
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL

@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tws
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: tws
+  policyTypes: [Ingress]
+  # Only opted-in strategy pods can reach the API. RDP uses kubectl port-forward.
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: philipp-trading-dev
+          podSelector:
+            matchLabels:
+              trading.philipp.io/ib-client: "true"
+      ports:
+        - protocol: TCP
+          port: api

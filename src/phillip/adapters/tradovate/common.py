@@ -9,8 +9,6 @@ from typing import Any
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.data import BarType
 from nautilus_trader.model.enums import AssetClass
-from nautilus_trader.model.enums import BarAggregation
-from nautilus_trader.model.enums import PriceType
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.identifiers import Symbol
 from nautilus_trader.model.instruments import FuturesContract
@@ -49,24 +47,6 @@ def decode_sockjs_frame(raw: bytes | str) -> list[dict[str, Any]]:
     return messages
 
 
-def bar_spec_to_chart(bar_type: BarType) -> tuple[str, int, int]:
-    spec = bar_type.spec
-    if spec.price_type != PriceType.LAST:
-        raise ValueError(f"Tradovate chart bars require LAST price type, got {spec.price_type}")
-
-    if spec.aggregation == BarAggregation.MINUTE:
-        return "MinuteBar", spec.step, spec.step * 60 * 1_000_000_000
-    if spec.aggregation == BarAggregation.HOUR:
-        return "MinuteBar", spec.step * 60, spec.step * 3_600 * 1_000_000_000
-    if spec.aggregation == BarAggregation.DAY and spec.step == 1:
-        return "DailyBar", 1, 86_400 * 1_000_000_000
-
-    raise ValueError(
-        "Tradovate external chart bars support minute, hour, and one-day LAST bars; "
-        f"got {spec}",
-    )
-
-
 def parse_instrument(
     raw_symbol: str,
     contract: dict[str, Any],
@@ -80,11 +60,24 @@ def parse_instrument(
     currency_code = str(currency.get("name") or currency.get("code") or "USD").upper()
     expiration_ns = parse_timestamp_ns(maturity.get("expirationDate"), ts_init)
     product_symbol = str(product.get("name") or raw_symbol)
+    root = product_symbol.upper()
+    description = f"{product_symbol} {product.get('description', '')}".lower()
+    index_roots = {"ES", "MES", "NQ", "MNQ", "YM", "MYM", "RTY", "M2K", "NKD"}
+    fx_roots = {"6A", "6B", "6C", "6E", "6J", "6S", "M6A", "M6B", "M6E"}
+    debt_roots = {"ZT", "ZF", "ZN", "TN", "ZB", "UB", "SR1", "SR3"}
+    if root in index_roots or "index" in description:
+        asset_class = AssetClass.INDEX
+    elif root in fx_roots or "currency" in description or "foreign exchange" in description:
+        asset_class = AssetClass.FX
+    elif root in debt_roots or any(word in description for word in ("treasury", "bond", "interest rate")):
+        asset_class = AssetClass.DEBT
+    else:
+        asset_class = AssetClass.COMMODITY
 
     return FuturesContract(
         instrument_id=InstrumentId(Symbol(raw_symbol), TRADOVATE_VENUE),
         raw_symbol=Symbol(raw_symbol),
-        asset_class=_infer_asset_class(product_symbol, str(product.get("description", ""))),
+        asset_class=asset_class,
         currency=Currency.from_str(currency_code),
         price_precision=price_precision,
         price_increment=Price.from_str(str(tick_size)),
@@ -124,18 +117,3 @@ def parse_bar(
         ts_event=ts_open + interval_ns,
         ts_init=ts_init,
     )
-
-
-def _infer_asset_class(product_symbol: str, description: str) -> AssetClass:
-    root = product_symbol.upper()
-    text = f"{product_symbol} {description}".lower()
-    index_roots = {"ES", "MES", "NQ", "MNQ", "YM", "MYM", "RTY", "M2K", "NKD"}
-    fx_roots = {"6A", "6B", "6C", "6E", "6J", "6S", "M6A", "M6B", "M6E"}
-    debt_roots = {"ZT", "ZF", "ZN", "TN", "ZB", "UB", "SR1", "SR3"}
-    if root in index_roots or "index" in text:
-        return AssetClass.INDEX
-    if root in fx_roots or "currency" in text or "foreign exchange" in text:
-        return AssetClass.FX
-    if root in debt_roots or any(word in text for word in ("treasury", "bond", "interest rate")):
-        return AssetClass.DEBT
-    return AssetClass.COMMODITY

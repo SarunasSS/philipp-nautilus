@@ -18,6 +18,7 @@ spec:
       labels:
         app.kubernetes.io/name: subscribe
         app.kubernetes.io/part-of: trading
+        trading.philipp.io/ib-client: "true"
     spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
@@ -28,45 +29,27 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: subscribe
-          image: nautilus:review-required
-          imagePullPolicy: IfNotPresent
+        - name: philipp-trading-dev
+          image: philipp-trading-dev:latest
+          imagePullPolicy: Always
           command:
             - python
             - main.py
           args:
             - live
-            - --environment
-            - demo
-            - --trader-id
-            - $(TRADER_ID)
-            - --log-level
-            - $(LOG_LEVEL)
             - subscribe
             - run
-            - --bar-type
-            - $(BAR_TYPE)
+          envFrom:
+            - configMapRef:
+                name: subscribe-config
           env:
+            - name: TRADOVATE_ENVIRONMENT
+              value: demo
             - name: DATABENTO_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: trading-env
                   key: DATABENTO_API_KEY
-            - name: TRADER_ID
-              valueFrom:
-                configMapKeyRef:
-                  name: subscribe-config
-                  key: TRADER_ID
-            - name: LOG_LEVEL
-              valueFrom:
-                configMapKeyRef:
-                  name: subscribe-config
-                  key: LOG_LEVEL
-            - name: BAR_TYPE
-              valueFrom:
-                configMapKeyRef:
-                  name: subscribe-config
-                  key: BAR_TYPE
           resources:
             requests:
               cpu: 250m

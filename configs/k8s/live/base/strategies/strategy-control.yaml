@@ -96,9 +96,9 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: control-api
-          image: nautilus:review-required
-          imagePullPolicy: IfNotPresent
+        - name: philipp-trading-dev
+          image: philipp-trading-dev:latest
+          imagePullPolicy: Always
           command:
             - python
             - -m

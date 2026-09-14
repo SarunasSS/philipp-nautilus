@@ -28,8 +28,6 @@ class TradovateHttpClient:
         cid: int | None = None,
         sec: str | None = None,
         device_id: str | None = None,
-        access_token: str | None = None,
-        md_access_token: str | None = None,
         timeout_secs: int = 15,
     ) -> None:
         self._base_url = base_url.rstrip("/")
@@ -40,8 +38,8 @@ class TradovateHttpClient:
         self._cid = cid
         self._sec = sec
         self._device_id = device_id
-        self._access_token = access_token
-        self._md_access_token = md_access_token
+        self._access_token: str | None = None
+        self._md_access_token: str | None = None
         self._expiration_ns: int | None = None
         self._timeout_secs = int(timeout_secs)
         self._client = HttpClient(keyed_quotas=[], default_quota=None)
@@ -50,15 +48,63 @@ class TradovateHttpClient:
 
     async def get_access_token(self, market_data: bool = False) -> str:
         async with self._auth_lock:
-            if self._tokens_expiring():
+            now_ns = int(datetime.now().timestamp() * 1_000_000_000)
+            tokens_expiring = (
+                self._access_token is None
+                or self._md_access_token is None
+                or (
+                    self._expiration_ns is not None
+                    and now_ns >= self._expiration_ns - 15 * 60 * 1_000_000_000
+                )
+            )
+            if tokens_expiring:
                 if self._access_token is not None:
                     try:
-                        await self._renew_access_token()
+                        result = await self._request(
+                            method=HttpMethod.GET,
+                            path="/auth/renewaccesstoken",
+                            authenticated=True,
+                        )
+                        self._store_tokens(result)
                     except TradovateApiError:
                         self._access_token = None
                         self._md_access_token = None
                 if self._access_token is None:
-                    await self._request_access_token()
+                    missing = [
+                        name
+                        for name, value in (
+                            ("username", self._username),
+                            ("password", self._password),
+                            ("app_id", self._app_id),
+                            ("app_version", self._app_version),
+                            ("cid", self._cid),
+                            ("sec", self._sec),
+                        )
+                        if value in (None, "")
+                    ]
+                    if missing:
+                        raise TradovateApiError(
+                            "Missing credentials: " + ", ".join(missing),
+                        )
+
+                    payload: dict[str, Any] = {
+                        "name": self._username,
+                        "password": self._password,
+                        "appId": self._app_id,
+                        "appVersion": self._app_version,
+                        "cid": self._cid,
+                        "sec": self._sec,
+                    }
+                    if self._device_id:
+                        payload["deviceId"] = self._device_id
+
+                    result = await self._request(
+                        method=HttpMethod.POST,
+                        path="/auth/accesstokenrequest",
+                        body=msgspec.json.encode(payload),
+                        authenticated=False,
+                    )
+                    self._store_tokens(result)
 
             token = self._md_access_token if market_data else self._access_token
             if not token:
@@ -96,64 +142,6 @@ class TradovateHttpClient:
             body=msgspec.json.encode(payload),
             authenticated=True,
         )
-
-    async def _request_access_token(self) -> None:
-        missing = [
-            name
-            for name, value in (
-                ("username", self._username),
-                ("password", self._password),
-            )
-            if value in (None, "")
-        ]
-        if missing:
-            raise TradovateApiError(
-                "Missing credentials: " + ", ".join(missing) + ". Supply credentials or both access tokens.",
-            )
-
-        api_key_fields = {
-            "app_id": self._app_id,
-            "cid": self._cid,
-            "sec": self._sec,
-        }
-        provided_api_key_fields = {
-            name for name, value in api_key_fields.items() if value not in (None, "")
-        }
-        if provided_api_key_fields and len(provided_api_key_fields) != len(api_key_fields):
-            missing_api_key_fields = sorted(api_key_fields.keys() - provided_api_key_fields)
-            raise TradovateApiError(
-                "Incomplete API key: missing " + ", ".join(missing_api_key_fields),
-            )
-
-        payload: dict[str, Any] = {
-            "name": self._username,
-            "password": self._password,
-        }
-        if provided_api_key_fields:
-            payload.update(
-                appId=self._app_id,
-                appVersion=self._app_version,
-                cid=self._cid,
-                sec=self._sec,
-            )
-        if self._device_id:
-            payload["deviceId"] = self._device_id
-
-        result = await self._request(
-            method=HttpMethod.POST,
-            path="/auth/accesstokenrequest",
-            body=msgspec.json.encode(payload),
-            authenticated=False,
-        )
-        self._store_tokens(result)
-
-    async def _renew_access_token(self) -> None:
-        result = await self._request(
-            method=HttpMethod.GET,
-            path="/auth/renewaccesstoken",
-            authenticated=True,
-        )
-        self._store_tokens(result)
 
     async def _get(self, path: str, params: dict[str, str]) -> dict[str, Any]:
         result = await self._request(
@@ -195,9 +183,6 @@ class TradovateHttpClient:
             body=body,
             timeout_secs=self._timeout_secs,
         )
-        return self._decode_response(response)
-
-    def _decode_response(self, response: HttpResponse) -> Any:
         try:
             decoded = msgspec.json.decode(response.body) if response.body else {}
         except msgspec.DecodeError as exc:
@@ -222,11 +207,3 @@ class TradovateHttpClient:
             normalized = expiration[:-1] + "+00:00" if expiration.endswith("Z") else expiration
             self._expiration_ns = int(datetime.fromisoformat(normalized).timestamp() * 1_000_000_000)
         self._log.info("Tradovate access tokens acquired")
-
-    def _tokens_expiring(self) -> bool:
-        if self._access_token is None or self._md_access_token is None:
-            return True
-        if self._expiration_ns is None:
-            return False
-        now_ns = int(datetime.now().timestamp() * 1_000_000_000)
-        return now_ns >= self._expiration_ns - 15 * 60 * 1_000_000_000

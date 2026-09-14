@@ -37,6 +37,145 @@
           "tooltip": "Canonical Nautilus BarType, including the source after @ when internally aggregated."
         }
       ]
+    },
+    {
+      "id": "htf-sweep-cisd",
+      "display_name": "HTF Sweep + CISD",
+      "config_map": "htf-sweep-cisd-config",
+      "deployment": "htf-sweep-cisd",
+      "log_app": "htf-sweep-cisd",
+      "fields": [
+        {
+          "key": "TRADER_ID",
+          "label": "Trader ID",
+          "type": "string",
+          "validator": "nautilus_trader_id",
+          "pattern": "^[A-Z0-9][A-Z0-9_-]{2,63}$",
+          "min_length": 3,
+          "max_length": 64,
+          "tooltip": "Valid Nautilus TraderId using uppercase letters, numbers, underscores, or hyphens."
+        },
+        {
+          "key": "LOG_LEVEL",
+          "label": "Log level",
+          "type": "select",
+          "validator": "choice",
+          "options": ["OFF", "TRACE", "DEBUG", "INFO", "WARNING", "ERROR"],
+          "max_length": 7,
+          "tooltip": "Nautilus console log level."
+        },
+        {
+          "key": "HTF_BAR_TYPE",
+          "label": "HTF bar type",
+          "type": "string",
+          "validator": "nautilus_bar_type",
+          "pattern": "^[A-Za-z0-9._@-]+$",
+          "min_length": 1,
+          "max_length": 255,
+          "tooltip": "Composite/internal higher-timeframe Nautilus BarType."
+        },
+        {
+          "key": "LTF_BAR_TYPE",
+          "label": "LTF bar type",
+          "type": "string",
+          "validator": "nautilus_bar_type",
+          "pattern": "^[A-Za-z0-9._@-]+$",
+          "min_length": 1,
+          "max_length": 255,
+          "tooltip": "Lower-timeframe external Nautilus BarType used as the live data input."
+        },
+        {
+          "key": "EXECUTION_INSTRUMENT_ID",
+          "label": "Execution instrument ID",
+          "type": "string",
+          "validator": "nautilus_instrument_id",
+          "required": false,
+          "pattern": "^[A-Za-z0-9._-]+$",
+          "min_length": 1,
+          "max_length": 255,
+          "tooltip": "Leave empty for signals only. To execute, use the matching symbol on an available IB or Tradovate venue."
+        },
+        {
+          "key": "ENTRY_ORDER_TYPE",
+          "label": "Entry order type",
+          "type": "select",
+          "validator": "choice",
+          "options": ["MARKET", "LIMIT"],
+          "max_length": 6,
+          "tooltip": "Order type used for entries."
+        },
+        {
+          "key": "ENTRY_LIMIT_OFFSET",
+          "label": "Entry limit offset",
+          "type": "string",
+          "validator": "float",
+          "pattern": "^(0|[0-9]+(\\.[0-9]+)?)$",
+          "min_length": 1,
+          "max_length": 32,
+          "minimum": 0,
+          "maximum": 1,
+          "tooltip": "Limit entry offset as a direct non-negative ratio, for example 0.001 for 0.1%."
+        },
+        {
+          "key": "ENTRY_ORDER_EXPIRE_MINUTES",
+          "label": "Entry expiry (minutes)",
+          "type": "string",
+          "validator": "integer",
+          "pattern": "^[1-9][0-9]*$",
+          "min_length": 1,
+          "max_length": 5,
+          "minimum": 0,
+          "exclusive_minimum": true,
+          "tooltip": "Positive GTD lifetime for an unfilled limit entry; market entries ignore it."
+        },
+        {
+          "key": "TRADE_QUANTITY",
+          "label": "Trade quantity (contracts)",
+          "type": "string",
+          "validator": "integer",
+          "pattern": "^1$",
+          "min_length": 1,
+          "max_length": 1,
+          "minimum": 0,
+          "maximum": 1,
+          "exclusive_minimum": true,
+          "tooltip": "Locked to one contract, the minimum executable MNQ size approved for this deployment."
+        },
+        {
+          "key": "STOP_ORDER_TYPE",
+          "label": "Stop order type",
+          "type": "select",
+          "validator": "choice",
+          "options": ["MARKET", "LIMIT"],
+          "max_length": 6,
+          "tooltip": "Order type used for stop-loss exits."
+        },
+        {
+          "key": "STOP_LOSS_DISTANCE_RATIO",
+          "label": "Stop-loss distance ratio",
+          "type": "string",
+          "validator": "float",
+          "pattern": "^[0-9]+(\\.[0-9]+)?$",
+          "min_length": 1,
+          "max_length": 32,
+          "minimum": 0,
+          "maximum": 1,
+          "exclusive_minimum": true,
+          "tooltip": "Stop-loss location as a positive ratio of the CISD-to-swing distance."
+        },
+        {
+          "key": "STOP_LIMIT_OFFSET",
+          "label": "Stop-limit offset",
+          "type": "string",
+          "validator": "float",
+          "pattern": "^(0|[0-9]+(\\.[0-9]+)?)$",
+          "min_length": 1,
+          "max_length": 32,
+          "minimum": 0,
+          "maximum": 1,
+          "tooltip": "Stop-limit price offset as a direct non-negative ratio."
+        }
+      ]
     }
   ]
 }

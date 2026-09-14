@@ -1,0 +1,9 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: htf-sweep-cisd
+spec:
+  template:
+    spec:
+      imagePullSecrets:
+        - name: gcr-json-key

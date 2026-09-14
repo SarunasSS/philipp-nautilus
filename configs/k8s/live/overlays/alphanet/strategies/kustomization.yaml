@@ -8,9 +8,11 @@ resources:
   - control-auth-external-secret.yaml
 
 patches:
-  - path: subscribe-config-patch.yaml
+  - path: subscribe-deployment.yaml
+  - path: htf-sweep-cisd-deployment.yaml
+  - path: strategy-control-deployment.yaml
 
 images:
-  - name: nautilus
+  - name: philipp-trading-dev
     newName: europe-west1-docker.pkg.dev/oned-works/oned/philipp-trading-dev
-    newTag: 20260825-databento-preload-v1
+    newTag: latest

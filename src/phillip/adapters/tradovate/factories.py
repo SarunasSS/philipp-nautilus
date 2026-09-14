@@ -33,8 +33,6 @@ def get_tradovate_http_client(
         config.cid,
         config.sec,
         config.device_id,
-        config.access_token,
-        config.md_access_token,
         config.request_timeout_secs,
     )
 
@@ -49,8 +47,6 @@ def _cached_tradovate_http_client(
     cid: int | None,
     sec: str | None,
     device_id: str | None,
-    access_token: str | None,
-    md_access_token: str | None,
     request_timeout_secs: int,
 ) -> TradovateHttpClient:
     return TradovateHttpClient(
@@ -62,8 +58,6 @@ def _cached_tradovate_http_client(
         cid=cid,
         sec=sec,
         device_id=device_id,
-        access_token=access_token,
-        md_access_token=md_access_token,
         timeout_secs=request_timeout_secs,
     )
 
