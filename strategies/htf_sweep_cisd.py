@@ -13,6 +13,7 @@ from nautilus_trader.model.data import BarType
 from nautilus_trader.model.enums import OrderSide
 from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.model.instruments import Instrument
+from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.orders import Order
 from nautilus_trader.model.position import Position
 
@@ -34,10 +35,12 @@ class OrderMode(str, Enum):
 class HTFSweepCISDStrategyConfig(BaseStrategyConfig, frozen=True):
     htf_bar_type: str
     ltf_bar_type: str
+    execution_instrument_id: str | None = None
     comparison_tolerance: float = 0.0
     entry_order_type: str = OrderMode.LIMIT.value
     entry_limit_offset: float = 0.0
     entry_order_expire_minutes: int | None = None
+    trade_quantity: int | None = None
     trade_notional: float = 1_000.0
     stop_order_type: str = OrderMode.MARKET.value
     stop_loss_distance_ratio: float = 1.0
@@ -58,6 +61,34 @@ class SignalSideState:
     blocked: bool = False
 
 
+def validate_htf_sweep_routing(
+    htf_bar_type: BarType,
+    ltf_bar_type: BarType,
+    execution_instrument_id: InstrumentId,
+) -> None:
+    if htf_bar_type.instrument_id != ltf_bar_type.instrument_id:
+        raise ValueError("htf_bar_type and ltf_bar_type must use the same instrument")
+    if not htf_bar_type.is_composite():
+        raise ValueError("htf_bar_type must be passed as a composite bar type")
+    if not htf_bar_type.is_internally_aggregated():
+        raise ValueError("htf_bar_type must be internally aggregated")
+    if not ltf_bar_type.is_externally_aggregated():
+        raise ValueError("ltf_bar_type must be externally aggregated")
+    if not htf_bar_type.spec.is_time_aggregated() or not ltf_bar_type.spec.is_time_aggregated():
+        raise ValueError("htf_bar_type and ltf_bar_type must be time-aggregated bars")
+
+    htf_interval_ns = htf_bar_type.spec.get_interval_ns()
+    ltf_interval_ns = ltf_bar_type.spec.get_interval_ns()
+    if htf_interval_ns <= ltf_interval_ns:
+        raise ValueError("htf_bar_type interval must be greater than ltf_bar_type interval")
+    if htf_interval_ns % ltf_interval_ns != 0:
+        raise ValueError("htf_bar_type interval must be an exact multiple of ltf_bar_type interval")
+    if htf_bar_type.composite().standard() != ltf_bar_type.standard():
+        raise ValueError("htf_bar_type composite source must match ltf_bar_type")
+    if execution_instrument_id.symbol != ltf_bar_type.instrument_id.symbol:
+        raise ValueError("execution_instrument_id and ltf_bar_type must use the same symbol")
+
+
 @dataclass
 class Entry(Stratlet):
     config: HTFSweepCISDStrategyConfig
@@ -72,11 +103,16 @@ class Entry(Stratlet):
     stopped: bool = field(default=False, init=False)
 
     async def on_start(self) -> None:
-        raw_quantity = self.config.trade_notional / (self.last_close * float(self.instrument.multiplier))
         try:
-            quantity = self.instrument.make_qty(raw_quantity, round_down=True)
+            if self.config.trade_quantity is not None:
+                quantity = self.instrument.make_qty(self.config.trade_quantity)
+            else:
+                raw_quantity = self.config.trade_notional / (
+                    self.last_close * float(self.instrument.multiplier)
+                )
+                quantity = self.instrument.make_qty(raw_quantity, round_down=True)
         except ValueError as exc:
-            self.strategy.log.warning(f"Skipping entry; trade_notional is too small for instrument quantity: {exc}")
+            self.strategy.log.warning(f"Skipping entry; invalid trade size: {exc}")
             return
 
         order_side = OrderSide.BUY if self.direction == TradeDirection.LONG else OrderSide.SELL
@@ -307,6 +343,11 @@ class HTFSweepCISDStrategy(BaseStrategy):
 
         self._ltf_bar_type = BarType.from_str(config.ltf_bar_type)
         self._htf_bar_type = BarType.from_str(config.htf_bar_type)
+        self._execution_instrument_id = (
+            InstrumentId.from_str(config.execution_instrument_id)
+            if config.execution_instrument_id
+            else self._ltf_bar_type.instrument_id
+        )
         self._validate_config()
 
         self._htf_bars: list[Bar] = []
@@ -321,9 +362,19 @@ class HTFSweepCISDStrategy(BaseStrategy):
     def on_start(self) -> None:
         super().on_start()
 
-        self._instrument = self.cache.instrument(self._ltf_bar_type.instrument_id)
+        self._instrument = self.cache.instrument(self._execution_instrument_id)
         if self._instrument is None:
-            raise RuntimeError(f"No instrument found for {self._ltf_bar_type.instrument_id}")
+            raise RuntimeError(f"No execution instrument found for {self._execution_instrument_id}")
+
+        if self.config.live:
+            open_orders = self.cache.orders_open(instrument_id=self._execution_instrument_id)
+            open_positions = self.cache.positions_open(instrument_id=self._execution_instrument_id)
+            if open_orders or open_positions:
+                raise RuntimeError(
+                    f"Refusing to start with pre-existing exposure on {self._execution_instrument_id}: "
+                    f"{len(open_orders)} open order(s), {len(open_positions)} open position(s). "
+                    "Use a dedicated flat account or reconcile the exposure manually.",
+                )
 
         self.subscribe_bars(self._ltf_bar_type)
         self.subscribe_bars(self._htf_bar_type)
@@ -366,6 +417,10 @@ class HTFSweepCISDStrategy(BaseStrategy):
             raise ValueError("entry_limit_offset must be between 0 and 1")
         if self.config.entry_order_expire_minutes is not None and self.config.entry_order_expire_minutes <= 0:
             raise ValueError("entry_order_expire_minutes must be positive when set")
+        if self.config.trade_quantity is not None and self.config.trade_quantity <= 0:
+            raise ValueError("trade_quantity must be positive when set")
+        if self.config.live and self.config.trade_quantity != 1:
+            raise ValueError("live trade_quantity must be exactly 1")
         if self.config.trade_notional <= 0:
             raise ValueError("trade_notional must be positive")
         if not 0 < self.config.stop_loss_distance_ratio <= 1:
@@ -376,25 +431,11 @@ class HTFSweepCISDStrategy(BaseStrategy):
             raise ValueError("signal_cooldown_seconds must be non-negative")
 
     def _validate_bar_types(self) -> None:
-        if self._htf_bar_type.instrument_id != self._ltf_bar_type.instrument_id:
-            raise ValueError("htf_bar_type and ltf_bar_type must use the same instrument")
-        if not self._htf_bar_type.is_composite():
-            raise ValueError("htf_bar_type must be passed as a composite bar type")
-        if not self._htf_bar_type.is_internally_aggregated():
-            raise ValueError("htf_bar_type must be internally aggregated")
-        if not self._ltf_bar_type.is_externally_aggregated():
-            raise ValueError("ltf_bar_type must be externally aggregated")
-        if not self._htf_bar_type.spec.is_time_aggregated() or not self._ltf_bar_type.spec.is_time_aggregated():
-            raise ValueError("htf_bar_type and ltf_bar_type must be time-aggregated bars")
-
-        htf_interval_ns = self._htf_bar_type.spec.get_interval_ns()
-        ltf_interval_ns = self._ltf_bar_type.spec.get_interval_ns()
-        if htf_interval_ns <= ltf_interval_ns:
-            raise ValueError("htf_bar_type interval must be greater than ltf_bar_type interval")
-        if htf_interval_ns % ltf_interval_ns != 0:
-            raise ValueError("htf_bar_type interval must be an exact multiple of ltf_bar_type interval")
-        if self._htf_bar_type.composite().standard() != self._ltf_bar_type.standard():
-            raise ValueError("htf_bar_type composite source must match ltf_bar_type")
+        validate_htf_sweep_routing(
+            self._htf_bar_type,
+            self._ltf_bar_type,
+            self._execution_instrument_id,
+        )
 
     def _evaluate_signal(self, last_ltf_bar: Bar) -> None:
         if len(self._ltf_bars) < 3:
@@ -511,6 +552,12 @@ class HTFSweepCISDStrategy(BaseStrategy):
         self._signal_cooldown_until_ns = now_ns + cooldown_ns
         self._short = SignalSideState()
         self._long = SignalSideState()
+
+        if self.config.live and any(not stratlet.completed for stratlet in self._stratlets):
+            self.log.warning(
+                "Skipping entry while another live trade is active; Tradovate uses netting",
+            )
+            return
 
         entry = Entry(
             strategy=self,

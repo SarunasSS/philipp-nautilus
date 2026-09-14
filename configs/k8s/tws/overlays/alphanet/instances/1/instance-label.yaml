@@ -1,0 +1,23 @@
+apiVersion: builtin
+kind: LabelTransformer
+metadata:
+  name: tws-instance
+labels:
+  app.kubernetes.io/instance: tws-1
+# Target only this instance. A general labels transformer also changes the
+# NetworkPolicy's incoming trading-pod selector and would block its clients.
+fieldSpecs:
+  - path: metadata/labels
+    create: true
+  - kind: Deployment
+    path: spec/selector/matchLabels
+    create: true
+  - kind: Deployment
+    path: spec/template/metadata/labels
+    create: true
+  - kind: Service
+    path: spec/selector
+    create: true
+  - kind: NetworkPolicy
+    path: spec/podSelector/matchLabels
+    create: true

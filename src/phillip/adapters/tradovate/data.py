@@ -16,12 +16,13 @@ from nautilus_trader.data.messages import UnsubscribeBars
 from nautilus_trader.live.data_client import LiveMarketDataClient
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.data import BarType
+from nautilus_trader.model.enums import BarAggregation
+from nautilus_trader.model.enums import PriceType
 from nautilus_trader.model.identifiers import ClientId
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import Instrument
 
 
-from .common import bar_spec_to_chart
 from .common import parse_bar
 from .config import TradovateDataClientConfig
 from .core import TRADOVATE_CLIENT_ID
@@ -78,6 +79,7 @@ class TradovateDataClient(LiveMarketDataClient):
 
     async def _connect(self) -> None:
         access_token = await self._http_client.get_access_token(market_data=True)
+        await self._instrument_provider.initialize()
         for instrument in self._instrument_provider.list_all():
             self._handle_data(instrument)
         await self._ws_client.connect(access_token)
@@ -167,7 +169,26 @@ class TradovateDataClient(LiveMarketDataClient):
         bar_type: BarType,
         instrument: Instrument,
     ) -> None:
-        underlying_type, element_size, interval_ns = bar_spec_to_chart(bar_type)
+        spec = bar_type.spec
+        if spec.price_type != PriceType.LAST:
+            raise ValueError(f"Tradovate chart bars require LAST price type, got {spec.price_type}")
+        if spec.aggregation == BarAggregation.MINUTE:
+            underlying_type = "MinuteBar"
+            element_size = spec.step
+            interval_ns = spec.step * 60 * 1_000_000_000
+        elif spec.aggregation == BarAggregation.HOUR:
+            underlying_type = "MinuteBar"
+            element_size = spec.step * 60
+            interval_ns = spec.step * 3_600 * 1_000_000_000
+        elif spec.aggregation == BarAggregation.DAY and spec.step == 1:
+            underlying_type = "DailyBar"
+            element_size = 1
+            interval_ns = 86_400 * 1_000_000_000
+        else:
+            raise ValueError(
+                "Tradovate external chart bars support minute, hour, and one-day LAST bars; "
+                f"got {spec}",
+            )
         response = await self._ws_client.request(
             "md/getChart",
             {

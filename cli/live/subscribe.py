@@ -26,6 +26,7 @@ def _run_subscribe(
         typer.Option(
             "--bar-type",
             "-b",
+            envvar="BAR_TYPE",
             help="Bar type to subscribe to",
         ),
     ],

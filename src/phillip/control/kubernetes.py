@@ -46,7 +46,7 @@ class KubernetesClient:
         config_map = self._request("GET", self._config_map_path(target))
         data = config_map.get("data", {})
         metadata = config_map.get("metadata", {})
-        missing = [field.key for field in target.fields if field.key not in data]
+        missing = [field.key for field in target.fields if field.required and field.key not in data]
         if missing or not metadata.get("resourceVersion"):
             fields = ", ".join(missing) if missing else "metadata.resourceVersion"
             raise KubernetesAPIError(500, f"ConfigMap is missing required field(s): {fields}")
@@ -55,7 +55,7 @@ class KubernetesClient:
             strategy_id=target.id,
             display_name=target.display_name,
             resource_version=metadata["resourceVersion"],
-            values={field.key: data[field.key] for field in target.fields},
+            values={field.key: data.get(field.key, "") for field in target.fields},
             fields=target.fields,
         )
 

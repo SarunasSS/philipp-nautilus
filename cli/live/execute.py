@@ -5,6 +5,7 @@ from typing import Annotated
 
 
 from nautilus_trader.model.data import BarType
+from nautilus_trader.model.identifiers import InstrumentId
 
 
 from strategies.execute import ExecuteStrategy
@@ -58,8 +59,12 @@ def _run_execute(
         typer.Option(min=0.0, help="Seconds to wait between entry and exit"),
     ] = 0.0,
 ) -> None:
+    data_instrument_id = BarType.from_str(bar_type).instrument_id
+    execution_instrument_id = InstrumentId.from_str(instrument_id) if instrument_id else data_instrument_id
+
     _run_live(
-        data_instrument_ids=[BarType.from_str(bar_type).instrument_id],
+        data_instrument_ids=[data_instrument_id],
+        execution_instrument_ids=[execution_instrument_id],
         settings=_get_live_settings(ctx),
         strategy=ExecuteStrategy(
             config=ExecuteStrategyConfig(

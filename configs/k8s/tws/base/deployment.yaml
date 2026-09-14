@@ -1,0 +1,148 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tws
+  labels:
+    app.kubernetes.io/name: tws
+    app.kubernetes.io/part-of: philipp-trading
+spec:
+  replicas: 0
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tws
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tws
+        app.kubernetes.io/part-of: philipp-trading
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      # The upstream desktop performs root initialization before running as abc.
+      securityContext:
+        seccompProfile:
+          type: Unconfined
+      initContainers:
+        - name: prepare-storage
+          image: ghcr.io/gnzsnz/tws-rdesktop:stable
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: tws-env
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              chmod 1777 /tws-tmp
+              mkdir -p /tws-logs/tws /tws-logs/console /tws-logs/system
+              chown "${PUID}:${PGID}" /runtime /tws-logs/tws /tws-logs/console
+              chmod 700 /tws-logs/tws /tws-logs/console
+              cp /tws-config/jts.ini /tws-logs/tws/jts.ini
+              chown "${PUID}:${PGID}" /tws-logs/tws/jts.ini
+              chmod 600 /tws-logs/tws/jts.ini
+          volumeMounts:
+            - name: temporary
+              mountPath: /tws-tmp
+            - name: desktop
+              mountPath: /runtime
+            - name: logs
+              mountPath: /tws-logs
+            - name: settings
+              mountPath: /tws-config
+              readOnly: true
+      containers:
+        - name: tws
+          image: ghcr.io/gnzsnz/tws-rdesktop:stable
+          imagePullPolicy: Always
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              console_log="/tws-logs/console/${POD_UID}.log"
+              touch "$console_log"
+              chmod 600 "$console_log"
+              chown "${PUID}:${PGID}" "$console_log"
+              exec > >(tee -a "$console_log") 2>&1
+              exec /init
+          ports:
+            - name: api
+              containerPort: 7499
+            - name: rdp
+              containerPort: 3389
+          env:
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: PASSWD
+              valueFrom:
+                secretKeyRef:
+                  name: tws-rdp
+                  key: RDP_PASSWORD
+            - name: TWS_USERID
+              valueFrom:
+                secretKeyRef:
+                  name: tws-login
+                  key: IB_USERNAME
+            - name: TWS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tws-login
+                  key: IB_PASSWORD
+          envFrom:
+            - configMapRef:
+                name: tws-env
+          volumeMounts:
+            - name: desktop
+              mountPath: /config
+            # Native TWS logs share this directory with generated session state.
+            - name: logs
+              mountPath: /config/tws_settings
+              subPath: tws
+            - name: logs
+              mountPath: /var/log
+              subPath: system
+            - name: logs
+              mountPath: /tws-logs
+            - name: temporary
+              mountPath: /tmp
+            - name: shared-memory
+              mountPath: /dev/shm
+          # Desktop readiness permits manual IB login; it does not prove API login.
+          startupProbe:
+            tcpSocket:
+              port: rdp
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            tcpSocket:
+              port: rdp
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "1"
+              memory: 4Gi
+            limits:
+              cpu: "4"
+              memory: 6Gi
+      volumes:
+        - name: logs
+          persistentVolumeClaim:
+            claimName: tws-logs
+        - name: desktop
+          emptyDir:
+            sizeLimit: 2Gi
+        - name: settings
+          configMap:
+            name: tws-settings
+            defaultMode: 0444
+        - name: temporary
+          emptyDir:
+            sizeLimit: 2Gi
+        - name: shared-memory
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Gi

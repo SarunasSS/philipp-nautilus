@@ -6,7 +6,6 @@ from nautilus_trader.core.uuid import UUID4
 from nautilus_trader.execution.reports import FillReport
 from nautilus_trader.execution.reports import OrderStatusReport
 from nautilus_trader.execution.reports import PositionStatusReport
-from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.enums import LiquiditySide
 from nautilus_trader.model.enums import OrderSide
 from nautilus_trader.model.enums import OrderStatus
@@ -19,12 +18,9 @@ from nautilus_trader.model.identifiers import ClientOrderId
 from nautilus_trader.model.identifiers import TradeId
 from nautilus_trader.model.identifiers import VenueOrderId
 from nautilus_trader.model.instruments import Instrument
-from nautilus_trader.model.objects import AccountBalance
-from nautilus_trader.model.objects import MarginBalance
 from nautilus_trader.model.objects import Money
 
 from .common import parse_timestamp_ns
-from .execution_commands import parse_expire_time
 
 
 CLOSED_ORDER_STATUSES = {
@@ -59,7 +55,26 @@ def parse_order_report(
 ) -> OrderStatusReport:
     quantity = instrument.make_qty(float(version["orderQty"]))
     filled_qty = instrument.make_qty(float(execution.get("cumQty", 0) or 0))
-    status = _order_status(str(order["ordStatus"]), quantity.as_double(), filled_qty.as_double())
+    raw_status = str(order["ordStatus"])
+    statuses = {
+        "Canceled": OrderStatus.CANCELED,
+        "Expired": OrderStatus.EXPIRED,
+        "Filled": OrderStatus.FILLED,
+        "PendingCancel": OrderStatus.PENDING_CANCEL,
+        "PendingNew": OrderStatus.SUBMITTED,
+        "PendingReplace": OrderStatus.PENDING_UPDATE,
+        "Rejected": OrderStatus.REJECTED,
+        "Suspended": OrderStatus.ACCEPTED,
+        "Unknown": OrderStatus.ACCEPTED,
+        "Working": OrderStatus.PARTIALLY_FILLED if filled_qty.as_double() else OrderStatus.ACCEPTED,
+    }
+    if raw_status == "Completed":
+        status = OrderStatus.FILLED if filled_qty >= quantity else OrderStatus.CANCELED
+    else:
+        try:
+            status = statuses[raw_status]
+        except KeyError as exc:
+            raise ValueError(f"Unsupported Tradovate order status: {raw_status}") from exc
     order_type = _ORDER_TYPES.get(str(version["orderType"]))
     time_in_force = _TIME_IN_FORCE.get(str(version.get("timeInForce", "Day")))
     if order_type is None or time_in_force is None:
@@ -68,6 +83,13 @@ def parse_order_report(
     ts_accepted = parse_timestamp_ns(order.get("timestamp"), ts_init)
     ts_last = parse_timestamp_ns(execution.get("timestamp"), ts_accepted)
     trigger_price = version.get("stopPrice")
+    raw_expire_time = version.get("expireTime")
+    expire_time = None
+    if raw_expire_time:
+        normalized = (
+            raw_expire_time[:-1] + "+00:00" if raw_expire_time.endswith("Z") else raw_expire_time
+        )
+        expire_time = datetime.fromisoformat(normalized)
     return OrderStatusReport(
         account_id=account_id,
         instrument_id=instrument.id,
@@ -83,7 +105,7 @@ def parse_order_report(
         ts_last=ts_last,
         ts_init=ts_init,
         client_order_id=client_order_id,
-        expire_time=parse_expire_time(version.get("expireTime")),
+        expire_time=expire_time,
         price=instrument.make_price(float(version["price"])) if version.get("price") is not None else None,
         trigger_price=(
             instrument.make_price(float(trigger_price)) if trigger_price is not None else None
@@ -144,29 +166,6 @@ def parse_position_report(
     )
 
 
-def parse_account_balances(
-    snapshot: dict[str, Any],
-) -> tuple[list[AccountBalance], list[MarginBalance]]:
-    total = Decimal(str(snapshot.get("netLiq", snapshot.get("totalCashValue", 0)) or 0))
-    initial = Decimal(str(snapshot.get("initialMargin", 0) or 0))
-    maintenance = Decimal(str(snapshot.get("maintenanceMargin", 0) or 0))
-    return (
-        [
-            AccountBalance(
-                total=Money(total, USD),
-                locked=Money(initial, USD),
-                free=Money(total - initial, USD),
-            ),
-        ],
-        [
-            MarginBalance(
-                initial=Money(initial, USD),
-                maintenance=Money(maintenance, USD),
-            ),
-        ],
-    )
-
-
 def latest_by(entities: list[dict[str, Any]], key: str) -> dict[int, dict[str, Any]]:
     result: dict[int, dict[str, Any]] = {}
     for entity in entities:
@@ -194,27 +193,6 @@ def in_time_range(timestamp_ns: int, start: datetime | None, end: datetime | Non
     if end is not None and timestamp_ns > int(end.timestamp() * 1_000_000_000):
         return False
     return True
-
-
-def _order_status(value: str, quantity: float, filled_qty: float) -> OrderStatus:
-    statuses = {
-        "Canceled": OrderStatus.CANCELED,
-        "Expired": OrderStatus.EXPIRED,
-        "Filled": OrderStatus.FILLED,
-        "PendingCancel": OrderStatus.PENDING_CANCEL,
-        "PendingNew": OrderStatus.SUBMITTED,
-        "PendingReplace": OrderStatus.PENDING_UPDATE,
-        "Rejected": OrderStatus.REJECTED,
-        "Suspended": OrderStatus.ACCEPTED,
-        "Unknown": OrderStatus.ACCEPTED,
-        "Working": OrderStatus.PARTIALLY_FILLED if filled_qty else OrderStatus.ACCEPTED,
-    }
-    if value == "Completed":
-        return OrderStatus.FILLED if filled_qty >= quantity else OrderStatus.CANCELED
-    try:
-        return statuses[value]
-    except KeyError as exc:
-        raise ValueError(f"Unsupported Tradovate order status: {value}") from exc
 
 
 def _order_side(value: str) -> OrderSide:

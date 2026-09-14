@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - deployment.yaml
+  - service.yaml
+  - storage.yaml
+  - network-policy.yaml
+
+configMapGenerator:
+  - name: tws-env
+    envs:
+      - tws.env
+  - name: tws-settings
+    files:
+      - jts.ini
+
+configurations:
+  - secret-references.yaml

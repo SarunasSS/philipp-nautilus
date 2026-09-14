@@ -1,7 +1,6 @@
 import asyncio
 
 from datetime import UTC
-from datetime import datetime
 from typing import Any
 
 from nautilus_trader.execution.messages import BatchCancelOrders
@@ -65,13 +64,19 @@ class TradovateOrderCommandClient(LiveExecutionClient):
             self._log.error(f"Cannot modify {command.client_order_id} without a venue order ID")
             return
         try:
-            payload = build_modify_order_payload(
-                order,
-                int(venue_order_id.value),
-                command.quantity,
-                command.price,
-                command.trigger_price,
-            )
+            payload = _build_order_payload(order)
+            payload["orderId"] = int(venue_order_id.value)
+            if command.quantity is not None:
+                raw_quantity = command.quantity.as_double()
+                if raw_quantity != int(raw_quantity) or raw_quantity <= 0:
+                    raise ValueError(
+                        f"Tradovate futures order quantity must be a positive integer, got {raw_quantity}",
+                    )
+                payload["orderQty"] = int(raw_quantity)
+            if command.price is not None:
+                payload["price"] = command.price.as_double()
+            if command.trigger_price is not None:
+                payload["stopPrice"] = command.trigger_price.as_double()
             result = await self._http_client.post("/order/modifyorder", payload)
             require_command_success(result)
         except Exception as exc:
@@ -146,10 +151,13 @@ class TradovateOrderCommandClient(LiveExecutionClient):
         if self._tradovate_account_id is None or self._tradovate_account_spec is None:
             raise RuntimeError("Tradovate execution client is not connected")
         try:
-            payload = build_place_order_payload(
-                order,
-                self._tradovate_account_id,
-                self._tradovate_account_spec,
+            payload = _build_order_payload(order)
+            payload.update(
+                accountSpec=self._tradovate_account_spec,
+                accountId=self._tradovate_account_id,
+                action="Buy" if order.side == OrderSide.BUY else "Sell",
+                symbol=order.instrument_id.symbol.value,
+                isAutomated=True,
             )
         except ValueError as exc:
             self.generate_order_denied(
@@ -220,22 +228,6 @@ class TradovateOrderCommandClient(LiveExecutionClient):
         )
 
 
-def build_place_order_payload(
-    order: Order,
-    account_id: int,
-    account_spec: str,
-) -> dict[str, Any]:
-    payload = _build_order_payload(order)
-    payload.update(
-        accountSpec=account_spec,
-        accountId=account_id,
-        action="Buy" if order.side == OrderSide.BUY else "Sell",
-        symbol=order.instrument_id.symbol.value,
-        isAutomated=True,
-    )
-    return payload
-
-
 def _build_order_payload(order: Order) -> dict[str, Any]:
     try:
         order_type = _ORDER_TYPES[order.order_type]
@@ -267,37 +259,6 @@ def _build_order_payload(order: Order) -> dict[str, Any]:
             raise ValueError("Tradovate GTD orders require an expiration time")
         payload["expireTime"] = order.expire_time.astimezone(UTC).isoformat().replace("+00:00", "Z")
     return payload
-
-
-def build_modify_order_payload(
-    order: Order,
-    venue_order_id: int,
-    quantity: Any,
-    price: Any,
-    trigger_price: Any,
-) -> dict[str, Any]:
-    payload = _build_order_payload(order)
-    payload["orderId"] = venue_order_id
-
-    if quantity is not None:
-        raw_quantity = quantity.as_double()
-        if raw_quantity != int(raw_quantity) or raw_quantity <= 0:
-            raise ValueError(
-                f"Tradovate futures order quantity must be a positive integer, got {raw_quantity}",
-            )
-        payload["orderQty"] = int(raw_quantity)
-    if price is not None:
-        payload["price"] = price.as_double()
-    if trigger_price is not None:
-        payload["stopPrice"] = trigger_price.as_double()
-    return payload
-
-
-def parse_expire_time(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
-    return datetime.fromisoformat(normalized)
 
 
 def require_command_success(result: Any) -> None:

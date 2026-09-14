@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 
 from pathlib import Path
 from typing import Literal
 
 from nautilus_trader.model.data import BarType
+from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.identifiers import TraderId
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -17,7 +19,15 @@ from pydantic import model_validator
 
 
 FieldType = Literal["string", "select"]
-ValidatorType = Literal["string", "choice", "nautilus_trader_id", "nautilus_bar_type"]
+ValidatorType = Literal[
+    "string",
+    "choice",
+    "float",
+    "integer",
+    "nautilus_bar_type",
+    "nautilus_instrument_id",
+    "nautilus_trader_id",
+]
 
 
 class StrategyField(BaseModel):
@@ -32,6 +42,10 @@ class StrategyField(BaseModel):
     pattern: str | None = None
     min_length: int = Field(default=0, ge=0, le=4096)
     max_length: int = Field(default=255, ge=1, le=4096)
+    minimum: float | None = None
+    maximum: float | None = None
+    exclusive_minimum: bool = False
+    exclusive_maximum: bool = False
     tooltip: str = Field(default="", max_length=500)
 
     @model_validator(mode="after")
@@ -42,13 +56,17 @@ class StrategyField(BaseModel):
             raise ValueError("select fields require options")
         if self.validator == "choice" and not self.options:
             raise ValueError("choice validation requires options")
+        if self.minimum is not None and self.maximum is not None and self.minimum > self.maximum:
+            raise ValueError("minimum cannot exceed maximum")
         if self.pattern:
             re.compile(self.pattern)
         return self
 
     def validate_value(self, value: str) -> str:
-        if self.required and not value:
-            raise ValueError("is required")
+        if not value:
+            if self.required:
+                raise ValueError("is required")
+            return value
         if len(value) < self.min_length or len(value) > self.max_length:
             raise ValueError(f"must contain {self.min_length}-{self.max_length} characters")
         if self.pattern and re.fullmatch(self.pattern, value) is None:
@@ -60,6 +78,13 @@ class StrategyField(BaseModel):
                 TraderId(value)
             except (TypeError, ValueError) as error:
                 raise ValueError("must be a valid Nautilus TraderId") from error
+        if self.validator == "nautilus_instrument_id":
+            try:
+                parsed_instrument_id = InstrumentId.from_str(value)
+            except (TypeError, ValueError) as error:
+                raise ValueError("must be a valid Nautilus InstrumentId") from error
+            if str(parsed_instrument_id) != value:
+                raise ValueError(f"must use the canonical InstrumentId form: {parsed_instrument_id}")
         if self.validator == "nautilus_bar_type":
             try:
                 parsed = BarType.from_str(value)
@@ -67,6 +92,24 @@ class StrategyField(BaseModel):
                 raise ValueError("must be a valid Nautilus BarType") from error
             if str(parsed) != value:
                 raise ValueError(f"must use the canonical BarType form: {parsed}")
+        if self.validator in {"float", "integer"}:
+            try:
+                parsed_number = float(value) if self.validator == "float" else int(value)
+            except (TypeError, ValueError) as error:
+                expected = "a number" if self.validator == "float" else "an integer"
+                raise ValueError(f"must be {expected}") from error
+            if not math.isfinite(parsed_number):
+                raise ValueError("must be a finite number")
+            if self.minimum is not None:
+                if self.exclusive_minimum and parsed_number <= self.minimum:
+                    raise ValueError(f"must be greater than {self.minimum:g}")
+                if not self.exclusive_minimum and parsed_number < self.minimum:
+                    raise ValueError(f"must be at least {self.minimum:g}")
+            if self.maximum is not None:
+                if self.exclusive_maximum and parsed_number >= self.maximum:
+                    raise ValueError(f"must be less than {self.maximum:g}")
+                if not self.exclusive_maximum and parsed_number > self.maximum:
+                    raise ValueError(f"must be at most {self.maximum:g}")
         return value
 
 
@@ -90,7 +133,8 @@ class StrategyTarget(BaseModel):
     def validate_values(self, values: dict[str, str]) -> dict[str, str]:
         expected = {field.key for field in self.fields}
         provided = set(values)
-        if missing := sorted(expected - provided):
+        required = {field.key for field in self.fields if field.required}
+        if missing := sorted(required - provided):
             raise ValueError(f"missing configuration field(s): {', '.join(missing)}")
         if extra := sorted(provided - expected):
             raise ValueError(f"unsupported configuration field(s): {', '.join(extra)}")
@@ -98,9 +142,44 @@ class StrategyTarget(BaseModel):
         validated: dict[str, str] = {}
         for field in self.fields:
             try:
-                validated[field.key] = field.validate_value(values[field.key])
+                validated[field.key] = field.validate_value(values.get(field.key, ""))
             except ValueError as error:
                 raise ValueError(f"{field.key}: {error}") from error
+
+        if self.id == "htf-sweep-cisd":
+            try:
+                htf_bar_type = BarType.from_str(validated["HTF_BAR_TYPE"])
+                ltf_bar_type = BarType.from_str(validated["LTF_BAR_TYPE"])
+                execution_instrument_id = (
+                    InstrumentId.from_str(validated["EXECUTION_INSTRUMENT_ID"])
+                    if validated["EXECUTION_INSTRUMENT_ID"] else None
+                )
+                if htf_bar_type.instrument_id != ltf_bar_type.instrument_id:
+                    raise ValueError("htf_bar_type and ltf_bar_type must use the same instrument")
+                if not htf_bar_type.is_composite():
+                    raise ValueError("htf_bar_type must be passed as a composite bar type")
+                if not htf_bar_type.is_internally_aggregated():
+                    raise ValueError("htf_bar_type must be internally aggregated")
+                if not ltf_bar_type.is_externally_aggregated():
+                    raise ValueError("ltf_bar_type must be externally aggregated")
+                if not htf_bar_type.spec.is_time_aggregated() or not ltf_bar_type.spec.is_time_aggregated():
+                    raise ValueError("htf_bar_type and ltf_bar_type must be time-aggregated bars")
+
+                htf_interval_ns = htf_bar_type.spec.get_interval_ns()
+                ltf_interval_ns = ltf_bar_type.spec.get_interval_ns()
+                if htf_interval_ns <= ltf_interval_ns:
+                    raise ValueError("htf_bar_type interval must be greater than ltf_bar_type interval")
+                if htf_interval_ns % ltf_interval_ns != 0:
+                    raise ValueError("htf_bar_type interval must be an exact multiple of ltf_bar_type interval")
+                if htf_bar_type.composite().standard() != ltf_bar_type.standard():
+                    raise ValueError("htf_bar_type composite source must match ltf_bar_type")
+                if (
+                    execution_instrument_id is not None
+                    and execution_instrument_id.symbol != ltf_bar_type.instrument_id.symbol
+                ):
+                    raise ValueError("execution_instrument_id and ltf_bar_type must use the same symbol")
+            except ValueError as error:
+                raise ValueError(f"HTF sweep routing: {error}") from error
         return validated
 
 
@@ -153,24 +232,22 @@ class StrategyConfigResponse(BaseModel):
     fields: list[StrategyField]
     restarted_at: str | None = None
 
-    def to_form_json(self) -> str:
-        return json.dumps(
-            {
-                "strategy_id": self.strategy_id,
-                "resource_version": self.resource_version,
-                "values": self.values,
-                "fields": [field.model_dump() for field in self.fields],
-            },
-            separators=(",", ":"),
-        )
-
 
 class StrategyConfigDashboardResponse(StrategyConfigResponse):
     form_json: str
 
     @classmethod
     def from_config(cls, config: StrategyConfigResponse) -> StrategyConfigDashboardResponse:
-        return cls(**config.model_dump(), form_json=config.to_form_json())
+        form_json = json.dumps(
+            {
+                "strategy_id": config.strategy_id,
+                "resource_version": config.resource_version,
+                "values": config.values,
+                "fields": [field.model_dump() for field in config.fields],
+            },
+            separators=(",", ":"),
+        )
+        return cls(**config.model_dump(), form_json=form_json)
 
 
 class StrategyStatus(BaseModel):
