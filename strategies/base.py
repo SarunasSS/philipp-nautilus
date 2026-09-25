@@ -7,9 +7,13 @@ from dataclasses import field
 
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.model.data import Bar
+from nautilus_trader.model.data import TradeTick
 from nautilus_trader.model.events import OrderEvent
 from nautilus_trader.model.events import PositionEvent
 from nautilus_trader.trading.strategy import Strategy
+
+
+_BACKTEST_SHUTDOWN_STEPS = 64
 
 
 class BaseStrategyConfig(StrategyConfig, frozen=True, kw_only=True):
@@ -23,6 +27,11 @@ class Stratlet:
     task: asyncio.Task[None] | None = field(default=None, init=False)
     coroutine: Coroutine[object, object, None] = field(init=False)
     completed: bool = field(default=False, init=False)
+    stopping: bool = field(default=False, init=False)
+    stopped: bool = field(default=False, init=False)
+    _stop_in_progress: bool = field(default=False, init=False)
+    _stop_failed: bool = field(default=False, init=False)
+    _close_attempted: bool = field(default=False, init=False)
 
     async def start(self) -> None:
         try:
@@ -43,7 +52,41 @@ class Stratlet:
         raise NotImplementedError
 
     async def on_stop(self, wait_for_commands: bool = True) -> None:
+        if self.stopped:
+            return
+        if self._stop_in_progress:
+            while not self.stopped:
+                await asyncio.sleep(self.poll_delay)
+            return
+
+        self.stopping = True
+        self._stop_in_progress = True
+        try:
+            await self._on_stop(wait_for_commands)
+        except (asyncio.CancelledError, Exception) as exc:
+            self._stop_failed = True
+            self.strategy.log.error(f"{type(self).__name__} stop error: {exc}")
+            try:
+                await self._close_once(wait_for_commands)
+            except Exception as close_exc:
+                self.strategy.log.error(f"{type(self).__name__} close error: {close_exc}")
+            raise
+        finally:
+            self.stopped = True
+            self._stop_in_progress = False
+
+    async def _on_stop(self, wait_for_commands: bool = True) -> None:
         raise NotImplementedError
+
+    async def on_close(self, wait_for_commands: bool = True) -> None:
+        pass
+
+    async def _close_once(self, wait_for_commands: bool = True) -> None:
+        if self._close_attempted:
+            return
+
+        self._close_attempted = True
+        await self.on_close(wait_for_commands)
 
 
 class BaseStrategy(Strategy):
@@ -54,7 +97,7 @@ class BaseStrategy(Strategy):
         self._stratlets: list[Stratlet] = []
         self._updating = False
         self._update_pending = False
-        self._shutdown_future: asyncio.Future[list[None | BaseException]] | None = None
+        self._shutdown_future: asyncio.Task[None] | None = None
 
     def on_start(self) -> None:
         try:
@@ -68,6 +111,9 @@ class BaseStrategy(Strategy):
     def on_bar(self, bar: Bar) -> None:
         self._update()
 
+    def on_trade_tick(self, tick: TradeTick) -> None:
+        self._update()
+
     def on_order_event(self, event: OrderEvent) -> None:
         self._update()
 
@@ -75,26 +121,87 @@ class BaseStrategy(Strategy):
         self._update()
 
     def on_stop(self) -> None:
-        if self.config.live and self._entry_loop is not None and self._entry_loop.is_running():
-            self._shutdown_future = asyncio.gather(
-                *(stratlet.on_stop() for stratlet in self._stratlets),
-                return_exceptions=True,
-            )
+        self._shutdown_stratlets()
+
+    def on_dispose(self) -> None:
+        self._shutdown_stratlets()
+
+    def _shutdown_stratlets(self) -> None:
+        if not self._stratlets or (self._shutdown_future is not None and not self._shutdown_future.done()):
             return
 
-        # Backtest venue commands settle only after the synchronous stop callback returns.
-        stop_coroutines = [stratlet.on_stop(wait_for_commands=False) for stratlet in self._stratlets]
-        for coroutine in stop_coroutines:
-            try:
-                coroutine.send(None)
-            except StopIteration:
-                continue
+        stratlets = tuple(self._stratlets)
+        if self.config.live and self._entry_loop is not None and self._entry_loop.is_running():
+            self._shutdown_future = self._entry_loop.create_task(self._shutdown_live(stratlets))
+            return
 
-            coroutine.close()
+        # Backtest venue commands settle only after the synchronous callback returns.
+        self._dispatch_backtest(stratlets, stop=True)
+        self._dispatch_backtest(stratlets, stop=False)
 
-        for stratlet in self._stratlets:
+        for stratlet in stratlets:
             if stratlet.task is None:
-                stratlet.coroutine.close()
+                try:
+                    stratlet.coroutine.close()
+                except Exception as exc:
+                    self.log.error(f"{type(stratlet).__name__} task close error: {exc}")
+
+        self._stratlets = []
+
+    def _dispatch_backtest(self, stratlets: tuple[Stratlet, ...], stop: bool) -> None:
+        for stratlet in stratlets:
+            coroutine = (
+                stratlet.on_stop(wait_for_commands=False)
+                if stop
+                else stratlet._close_once(wait_for_commands=False)
+            )
+            phase = "stop" if stop else "close"
+            completed = False
+            try:
+                for _ in range(_BACKTEST_SHUTDOWN_STEPS):
+                    try:
+                        yielded = coroutine.send(None)
+                    except StopIteration:
+                        completed = True
+                        break
+                    if yielded is not None:
+                        self.log.error(
+                            f"{type(stratlet).__name__} {phase} needs an event loop "
+                            f"({type(yielded).__name__})",
+                        )
+                        break
+                else:
+                    self.log.error(
+                        f"{type(stratlet).__name__} {phase} exceeded "
+                        f"{_BACKTEST_SHUTDOWN_STEPS} immediate steps",
+                    )
+            except (asyncio.CancelledError, Exception) as exc:
+                self.log.error(f"{type(stratlet).__name__} {phase} error: {exc}")
+            finally:
+                if stop and not completed:
+                    stratlet._stop_failed = True
+                try:
+                    coroutine.close()
+                except Exception as exc:
+                    self.log.error(f"{type(stratlet).__name__} task close error: {exc}")
+
+    async def _shutdown_live(self, stratlets: tuple[Stratlet, ...]) -> None:
+        results = await asyncio.gather(*(stratlet.on_stop() for stratlet in stratlets), return_exceptions=True)
+        for stratlet, result in zip(stratlets, results, strict=True):
+            if isinstance(result, BaseException):
+                self.log.error(f"{type(stratlet).__name__} stop error: {result}")
+
+        results = await asyncio.gather(*(stratlet._close_once() for stratlet in stratlets), return_exceptions=True)
+        for stratlet, result in zip(stratlets, results, strict=True):
+            if isinstance(result, BaseException):
+                self.log.error(f"{type(stratlet).__name__} close error: {result}")
+
+        tasks = [stratlet.task for stratlet in stratlets if stratlet.task is not None]
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
         self._stratlets = []
 

@@ -7,9 +7,13 @@ NautilusTrader scaffold for backtesting experiments and live market-data/executi
 ```text
 cli/
 ├── backtest/            # Run catalog-backed backtests
-│   ├── __init__.py      # Shared backtest callback and runner helpers
+│   ├── __init__.py      # Shared bar/tick data loader and backtest runner
+│   ├── drift_pullback.py
 │   ├── htf_sweep_cisd.py
-│   └── subscribe.py
+│   ├── overnight_bias_orb.py
+│   ├── subscribe.py
+│   ├── vault_break.py
+│   └── vwap_pullback_adx.py
 ├── catalog.py           # Download Databento bars into the catalog
 └── live/                # Run live strategies through configured data providers
     ├── __init__.py      # Shared live callback and runner
@@ -26,9 +30,16 @@ src/phillip/adapters/tradovate/
 └── websocket/           # Framing, heartbeat, and reconnect handling
 strategies/
 ├── base.py              # Shared live/backtest stratlet lifecycle
+├── common.py            # Shared strategy time, price, and direction helpers
+├── drift_pullback.py    # Session-VWAP drift continuation bought on the first 5-minute pullback
 ├── execute.py           # ExecuteStrategy subscription plus execution tests
 ├── htf_sweep_cisd.py    # HTF sweep + CISD managed trade strategy
-└── subscribe.py         # SubscribeStrategy requests and logs bars
+├── indicators.py        # Wilder ADX shared by the strategies that gate on it
+├── overnight_bias_orb.py # Opening range breakout taken only with the overnight gap bias
+├── subscribe.py         # SubscribeStrategy requests and logs bars
+├── vault_break.py       # Session noise-boundary breakout bought above the session VWAP
+└── vwap_pullback_adx.py # Opening-range break, VWAP retest, reclaim bought behind a Wilder ADX gate
+docs/backtest.md          # Full backtest commands, parameters, and source comparisons
 configs/k8s/live/
 ├── base/
 │   ├── strategies/      # Reusable trading workload and narrow control API
@@ -66,8 +77,11 @@ Run the subscribe-bar backtest over the first half of 2026:
 uv run python main.py backtest \
   --start 2026-01-01 \
   --end 2026-06-01 \
-  subscribe run
+  subscribe run \
+  --bar-type NQ.c.0.GLBX-1-MINUTE-LAST-EXTERNAL
 ```
+
+`subscribe run` requires at least one `--bar-type`. Pass it more than once to load several bar streams; the first selected bar type configures the subscription strategy. The backtest runner can also combine requested bar and quote/trade tick streams in one engine run; it registers each instrument and venue and sorts the combined stream through Nautilus.
 
 Run the HTF sweep + CISD strategy. It logs `Short_signal` / `long_signal` when the CISD condition confirms, then manages the entry, stop-loss, and take-profit lifecycle:
 
@@ -80,20 +94,71 @@ uv run python main.py backtest \
   --ltf-bar-type NQ.c.0.GLBX-1-MINUTE-LAST-EXTERNAL \
   --entry-order-type LIMIT \
   --entry-limit-offset 0.0 \
-  --trade-notional 1000000 \
+  --risk-per-trade 1000 \
+  --max-contracts 5 \
   --stop-order-type MARKET \
   --stop-loss-distance-ratio 1.0 \
   --take-profit-multiplier 2.0
 ```
 
-`--entry-limit-offset` and `--stop-limit-offset` are direct ratios, so `0.001` means `0.1%`. `--trade-notional` defaults to `1000`; the NQ example above uses `1000000` so contract sizing produces filled futures orders in the local backtest. Signal cooldown defaults to one HTF period and can be overridden with `--signal-cooldown-seconds`. The HTF sweep backtest uses hedging mode so concurrent entries retain separate positions.
+`--entry-limit-offset` and `--stop-limit-offset` are direct ratios, so `0.001` means `0.1%`. Sizing is risk-based: `--risk-per-trade` (default `1000`) is the cash put at risk per trade, spread across the entry-to-stop distance, and `--max-contracts` caps the resulting size. Signal cooldown defaults to one HTF period and can be overridden with `--signal-cooldown-seconds`. Backtests use hedging so several entries can hold separate positions at once. Live Tradovate remains netted and permits one active entry per strategy.
 
-Each backtest exports Nautilus order, order-fill, fill, position, and account reports as strategy-prefixed CSV files under `data/results/`. It also creates two interactive, self-contained HTML files:
+The four strategies below take a flat `--contracts` instead. Each command is the minimal invocation; [backtest.md](docs/backtest.md) carries every flag, the parameter discussion, and the comparison against each strategy's source material.
+
+DriftPullback buys the first 5-minute pullback against an intraday drift confirmed on the 15-minute stream. It reads three bar streams of one instrument: `--vwap-bar-type` accumulates the session VWAP, `--signal-bar-type` freezes the anchor and drift and arms the setup, and `--bar-type` triggers the pullback entry. Exits are fixed point distances from the fill plus a session cutoff. See [backtest.md](docs/backtest.md#driftpullback).
+
+```bash
+uv run python main.py backtest \
+  --start 2026-04-01 \
+  --end 2026-05-01 \
+  drift-pullback run \
+  --bar-type NQ.c.0.GLBX-5-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL \
+  --signal-bar-type NQ.c.0.GLBX-15-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL \
+  --vwap-bar-type NQ.c.0.GLBX-1-MINUTE-LAST-EXTERNAL \
+  --contracts 1
+```
+
+OvernightBiasORB is an opening-range breakout on a single 15-minute stream that only trades in the direction the overnight gap implies. The stop is an ATR multiple of daily ranges, so several sessions of warm-up pass before the first trade. `--bar-type` must name a composite source, which acts as the one-minute bar magnifier for fills. See [backtest.md](docs/backtest.md#overnightbiasorb).
+
+```bash
+uv run python main.py backtest \
+  --start 2026-01-01 \
+  --end 2026-05-29 \
+  --chart-bar-type NQ.c.0.GLBX-15-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL \
+  overnight-bias-orb run \
+  --bar-type NQ.c.0.GLBX-15-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL \
+  --contracts 1
+```
+
+VaultBreak is a long-only session breakout on a single 30-minute stream. It buys a bar closing above both a noise boundary fixed once per day and the session VWAP, with a fixed-point bracket and a flatten time. `--bar-type` must name a composite source. See [backtest.md](docs/backtest.md#vaultbreak).
+
+```bash
+uv run python main.py backtest \
+  --start 2026-01-01 \
+  --end 2026-05-30 \
+  --chart-bar-type NQ.c.0.GLBX-30-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL \
+  vault-break run \
+  --bar-type NQ.c.0.GLBX-30-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL \
+  --contracts 1
+```
+
+VWAP Pullback + ADX Gate is a long-only opening-range retest on a single 1-minute stream. After a close above the opening range, it waits for a touch of the session VWAP and buys the first close back above it when the Wilder ADX gate allows. The stop and target are the last confirmed swing low and swing high rather than point distances. See [backtest.md](docs/backtest.md#vwap-pullback--adx-gate).
+
+```bash
+uv run python main.py backtest \
+  --start 2026-01-01 \
+  --end 2026-05-30 \
+  vwap-pullback-adx run \
+  --bar-type NQ.c.0.GLBX-1-MINUTE-LAST-EXTERNAL \
+  --contracts 1
+```
+
+Each backtest exports Nautilus order, order-fill, fill, position, and account reports as strategy-prefixed CSV files under `data/results/`. Runs with bars also create two interactive, self-contained HTML files; tick-fed DriftPullback runs export CSVs only. With multiple venues, account reports use the venue name in the filename:
 
 - `<strategy>-tearsheet.html` contains run information, performance statistics, equity, drawdown, periodic returns, return distribution, and rolling Sharpe charts.
 - `<strategy>-bars-with-fills.html` contains candlesticks with buy and sell fill markers.
 
-The bars-with-fills chart uses the selected catalog bar type and retains its latest 10,000 bars by default. Set `--chart-bar-type` to chart another bar type cached during the run, such as the HTF composite bars produced by the HTF Sweep/CISD strategy. Composite inputs are resolved to the standard bar type under which Nautilus caches the generated bars. Set `--chart-bar-limit` to review a larger or smaller window, or pass `--no-visualize` to skip HTML generation:
+The bars-with-fills chart uses the first requested strategy bar type and retains its latest 10,000 bars by default. Set `--chart-bar-type` to chart another bar type cached during the run. Composite inputs are resolved to the standard bar type under which Nautilus caches the generated bars. Set `--chart-bar-limit` to review a larger or smaller window, or pass `--no-visualize` to skip HTML generation:
 
 ```bash
 uv run python main.py backtest \
@@ -104,7 +169,7 @@ uv run python main.py backtest \
   htf-sweep-cisd run \
   --htf-bar-type NQ.c.0.GLBX-15-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL \
   --ltf-bar-type NQ.c.0.GLBX-1-MINUTE-LAST-EXTERNAL \
-  --trade-notional 1000000
+  --risk-per-trade 1000
 ```
 
 Run the same generic subscribe strategy against live Tradovate bars:
