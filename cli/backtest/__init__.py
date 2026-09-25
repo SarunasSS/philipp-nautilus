@@ -12,8 +12,11 @@ from nautilus_trader.analysis import create_tearsheet
 from nautilus_trader.analysis.tearsheet import create_bars_with_fills
 from nautilus_trader.backtest.config import BacktestEngineConfig
 from nautilus_trader.backtest.engine import BacktestEngine
+from nautilus_trader.backtest.models import PerContractFeeModel
 from nautilus_trader.config import CacheConfig
 from nautilus_trader.config import LoggingConfig
+from nautilus_trader.core.data import Data
+from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.data import BarType
 from nautilus_trader.model.enums import AccountType
@@ -36,6 +39,7 @@ class BacktestRunSettings:
     end: datetime
     catalog_path: Path
     starting_balance: str
+    commission_per_contract: float
     visualize: bool
     chart_bar_type: str | None
     chart_bar_limit: int
@@ -66,8 +70,16 @@ def _configure_backtest(
     ] = Path("data/catalog"),
     starting_balance: Annotated[
         str,
-        typer.Option("--starting-balance", help="Starting balance for simulated venue"),
+        typer.Option("--starting-balance", help="Starting balance for each simulated venue"),
     ] = "100000 USD",
+    commission_per_contract: Annotated[
+        float,
+        typer.Option(
+            "--commission-per-contract",
+            min=0.0,
+            help="Commission charged per contract per side; 0 leaves the venue with no fee model",
+        ),
+    ] = 0.0,
     visualize: Annotated[
         bool,
         typer.Option("--visualize/--no-visualize", help="Export Nautilus interactive HTML visualizations"),
@@ -98,6 +110,7 @@ def _configure_backtest(
         end=end,
         catalog_path=catalog_path,
         starting_balance=starting_balance,
+        commission_per_contract=commission_per_contract,
         visualize=visualize,
         chart_bar_type=chart_bar_type,
         chart_bar_limit=chart_bar_limit,
@@ -114,55 +127,124 @@ def _get_backtest_settings(ctx: typer.Context) -> BacktestRunSettings:
 
 def _load_backtest_data(
     settings: BacktestRunSettings,
-    requested_bar_type: str | None,
-) -> tuple[BarType, list[Bar], Instrument]:
-    catalog = ParquetDataCatalog(settings.catalog_path)
-    requested_bar_types = [requested_bar_type] if requested_bar_type is not None else None
-    bars = catalog.bars(bar_types=requested_bar_types, start=settings.start, end=settings.end)
-    if not bars:
-        raise typer.BadParameter(
-            f"No bars found in {settings.catalog_path} for {settings.start.date()} -> {settings.end.date()}",
-        )
+    catalog: ParquetDataCatalog,
+    bar_types: list[BarType] | None,
+    trade_tick_instrument_ids: list[str] | None,
+    quote_tick_instrument_ids: list[str] | None,
+) -> list[list[Data]]:
+    if not bar_types and not trade_tick_instrument_ids and not quote_tick_instrument_ids:
+        raise typer.BadParameter("At least one bar, trade tick, or quote tick stream must be requested")
 
-    selected_bar_type = BarType.from_str(requested_bar_type) if requested_bar_type is not None else bars[0].bar_type
-    bars = [bar for bar in bars if str(bar.bar_type) == str(selected_bar_type)]
-    instruments = catalog.instruments(instrument_ids=[str(selected_bar_type.instrument_id)])
-    if not instruments:
-        raise typer.BadParameter(f"No instrument found in {settings.catalog_path} for {selected_bar_type.instrument_id}")
+    data: list[list[Data]] = []
+    catalog_bar_types = dict.fromkeys(
+        bar_type.composite() if bar_type.is_composite() else bar_type for bar_type in bar_types or []
+    )
+    for bar_type in catalog_bar_types:
+        bars = catalog.bars(bar_types=[str(bar_type)], start=settings.start, end=settings.end)
+        if not bars:
+            raise typer.BadParameter(
+                f"No bars found in {settings.catalog_path} for {bar_type} "
+                f"{settings.start.date()} -> {settings.end.date()}",
+                param_hint="--bar-type",
+            )
+        data.append(bars)
 
-    return selected_bar_type, bars, instruments[0]
+    for instrument_id in dict.fromkeys(quote_tick_instrument_ids or []):
+        quotes = catalog.quote_ticks(instrument_ids=[instrument_id], start=settings.start, end=settings.end)
+        if not quotes:
+            raise typer.BadParameter(
+                f"No quote ticks found in {settings.catalog_path} for {instrument_id} "
+                f"{settings.start.date()} -> {settings.end.date()}",
+            )
+        data.append(quotes)
+
+    for instrument_id in dict.fromkeys(trade_tick_instrument_ids or []):
+        trades = catalog.trade_ticks(instrument_ids=[instrument_id], start=settings.start, end=settings.end)
+        if not trades:
+            raise typer.BadParameter(
+                f"No trade ticks found in {settings.catalog_path} for {instrument_id} "
+                f"{settings.start.date()} -> {settings.end.date()}",
+            )
+        data.append(trades)
+
+    return data
 
 
 def _run_backtest(
     settings: BacktestRunSettings,
-    requested_bar_type: str | None,
+    bar_types: list[BarType] | None,
     strategy_name: str,
-    create_strategy: Callable[[BarType], Strategy],
-    oms_type: OmsType = OmsType.NETTING,
+    create_strategy: Callable[[BarType | None], Strategy],
+    oms_type: OmsType = OmsType.HEDGING,
+    trade_tick_instrument_ids: list[str] | None = None,
+    quote_tick_instrument_ids: list[str] | None = None,
 ) -> None:
-    selected_bar_type, bars, instrument = _load_backtest_data(settings, requested_bar_type)
+    catalog = ParquetDataCatalog(settings.catalog_path)
+    data = _load_backtest_data(
+        settings,
+        catalog,
+        bar_types,
+        trade_tick_instrument_ids,
+        quote_tick_instrument_ids,
+    )
+    selected_bar_type = bar_types[0] if bar_types else None
+    instrument_ids = dict.fromkeys(
+        [str(bar_type.instrument_id) for bar_type in bar_types or []]
+        + (trade_tick_instrument_ids or [])
+        + (quote_tick_instrument_ids or []),
+    )
+    instruments: list[Instrument] = []
+    for instrument_id in instrument_ids:
+        matches = catalog.instruments(instrument_ids=[instrument_id])
+        if len(matches) != 1:
+            raise typer.BadParameter(
+                f"Expected one instrument in {settings.catalog_path} for {instrument_id}, "
+                f"found {len(matches)}",
+            )
+        instruments.append(matches[0])
+
+    bar_count = sum(len(stream) for stream in data if isinstance(stream[0], Bar))
+    tick_count = sum(len(stream) for stream in data if not isinstance(stream[0], Bar))
+    config_options: dict[str, CacheConfig] = {}
+    if settings.visualize and selected_bar_type is not None and settings.chart_bar_limit != 10_000:
+        # The chart reads cached bars after the run. Override the default 10,000
+        # only for a custom chart window, preserving the backtest reset default.
+        config_options["cache"] = CacheConfig(
+            bar_capacity=settings.chart_bar_limit,
+            drop_instruments_on_reset=False,
+        )
+
     engine = BacktestEngine(
         config=BacktestEngineConfig(
             trader_id=TraderId(settings.trader_id),
             logging=LoggingConfig(log_level=settings.log_level),
-            cache=CacheConfig(
-                bar_capacity=min(len(bars), settings.chart_bar_limit) if settings.visualize else 10_000,
-            ),
+            **config_options,
         ),
     )
     typer.echo(f"Created Nautilus BacktestEngine for trader_id={settings.trader_id}")
 
     try:
-        engine.add_venue(
-            venue=instrument.venue,
-            oms_type=oms_type,
-            account_type=AccountType.MARGIN,
-            starting_balances=[Money.from_str(settings.starting_balance)],
-            base_currency=None,
-        )
-        engine.add_instrument(instrument)
+        venues = dict.fromkeys(instrument.venue for instrument in instruments)
+        for venue in venues:
+            engine.add_venue(
+                venue=venue,
+                oms_type=oms_type,
+                account_type=AccountType.MARGIN,
+                starting_balances=[Money.from_str(settings.starting_balance)],
+                base_currency=None,
+                fee_model=(
+                    PerContractFeeModel(Money(settings.commission_per_contract, USD))
+                    if settings.commission_per_contract > 0
+                    else None
+                ),
+            )
+        for instrument in instruments:
+            engine.add_instrument(instrument)
         engine.add_strategy(create_strategy(selected_bar_type))
-        engine.add_data(bars)
+
+        for stream in data:
+            engine.add_data(stream, sort=False)
+        engine.sort_data()
         engine.run(start=settings.start, end=settings.end)
 
         results_path = Path("data/results")
@@ -172,13 +254,15 @@ def _run_backtest(
             "order-fills": engine.trader.generate_order_fills_report(),
             "fills": engine.trader.generate_fills_report(),
             "positions": engine.trader.generate_positions_report(),
-            "account": engine.trader.generate_account_report(venue=instrument.venue).rename_axis("ts_event"),
         }
+        for venue in venues:
+            report_name = "account" if len(venues) == 1 else f"account-{venue}"
+            reports[report_name] = engine.trader.generate_account_report(venue=venue).rename_axis("ts_event")
         for report_name, report in reports.items():
             report.to_csv(results_path / f"{strategy_name}-{report_name}.csv")
 
         visualization_paths: list[Path] = []
-        if settings.visualize:
+        if settings.visualize and selected_bar_type is not None:
             try:
                 chart_bar_type = (
                     BarType.from_str(settings.chart_bar_type)
@@ -215,8 +299,12 @@ def _run_backtest(
             )
             visualization_paths.extend((tearsheet_path, bars_with_fills_path))
 
+        data_description = (
+            f"{bar_count} bar(s), {tick_count} tick(s) "
+            f"across {len(instruments)} instrument(s)"
+        )
         typer.echo(
-            f"Backtest completed for {strategy_name} on {selected_bar_type} with {len(bars)} bar(s) "
+            f"Backtest completed for {strategy_name} on {data_description} "
             f"from {settings.start.date()} -> {settings.end.date()}.",
         )
         typer.echo(f"Exported {len(reports)} reports to {results_path}.")
@@ -230,9 +318,17 @@ def _run_backtest(
         typer.echo("Backtest engine disposed.")
 
 
+from cli.backtest.drift_pullback import cli as drift_pullback_cli
 from cli.backtest.htf_sweep_cisd import cli as htf_sweep_cisd_cli
+from cli.backtest.overnight_bias_orb import cli as overnight_bias_orb_cli
 from cli.backtest.subscribe import cli as subscribe_cli
+from cli.backtest.vault_break import cli as vault_break_cli
+from cli.backtest.vwap_pullback_adx import cli as vwap_pullback_adx_cli
 
 
 cli.add_typer(subscribe_cli, name="subscribe")
+cli.add_typer(drift_pullback_cli, name="drift-pullback")
 cli.add_typer(htf_sweep_cisd_cli, name="htf-sweep-cisd")
+cli.add_typer(overnight_bias_orb_cli, name="overnight-bias-orb")
+cli.add_typer(vault_break_cli, name="vault-break")
+cli.add_typer(vwap_pullback_adx_cli, name="vwap-pullback-adx")
